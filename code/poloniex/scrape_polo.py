@@ -9,10 +9,10 @@ sec = os.environ.get('polo_sec')
 polo = Poloniex(key, sec)
 
 
-def get_home_dir():
+def get_home_dir(repo_name='crypto_predict'):
     cwd = os.getcwd()
     cwd_list = cwd.split('/')
-    repo_position = [i for i, s in enumerate(cwd_list) if s == 'crytpo_predict']
+    repo_position = [i for i, s in enumerate(cwd_list) if s == repo_name]
     if len(repo_position) > 1:
         print("error!  more than one intance of repo name in path")
         return None
@@ -20,6 +20,22 @@ def get_home_dir():
     home_dir = '/'.join(cwd_list[:repo_position[0] + 1]) + '/'
     return home_dir
 
+
+def make_data_dirs():
+    """
+    Checks if data directory exists, if not, creates it.
+    """
+    dds = ['data',
+            'data/order_books',
+            'data/order_books/poloniex',
+            'data/order_books/bittrex']
+    dirs = [HOME_DIR + d for d in dds]
+    for d in dirs:
+        if not os.path.exists(d):
+            os.mkdir(d)
+
+HOME_DIR = get_home_dir()
+make_data_dirs()
 
 def get_all_orderbooks():
     """
@@ -59,8 +75,9 @@ def save_orderbook(buy_df, sell_df, market):
     """
     Saves one orderbook, in separate buy and sell files
     """
-    buy_file = HOME_DIR + 'data/order_books/poloniex/buy_orders_' + market + '.csv.gz'
-    sell_file = HOME_DIR + 'data/order_books/poloniex/sell_orders_' + market + '.csv.gz'
+    datapath = HOME_DIR + 'data/order_books/poloniex/'
+    buy_file = datapath + 'buy_orders_' + market + '.csv.gz'
+    sell_file = datapath + 'sell_orders_' + market + '.csv.gz'
     if os.path.exists(buy_file):
         buy_df.to_csv(buy_file, compression='gzip', mode='a', header=False)
         sell_df.to_csv(sell_file, compression='gzip', mode='a', header=False)
@@ -70,14 +87,17 @@ def save_orderbook(buy_df, sell_df, market):
 
 
 def save_all_order_books():
+    print('retrieving orderbooks...')
     buy_dfs, sell_dfs = get_all_orderbooks()
+    print('done.')
     save_orderbooks(buy_dfs, sell_dfs)
 
 
-def continuously_save_order_books(interval=600):
+def continuously_save_order_books(interval=60):
     """
     Saves all order books every 'interval' seconds.
     Poloniex allows 6 calls/second before your IP is banned.
+    At one scrape every 60 seconds, this is going to get huge very fast.
     """
     def keep_saving():
         while True:
@@ -88,9 +108,10 @@ def continuously_save_order_books(interval=600):
     thread.start()
 
 
-def get_trade_history():
+def get_entire_trade_history():
     """
     """
+
 
 # TODO: get all trade history
 # get all market depth and subscribe to updates, on major change (buy/sell)
