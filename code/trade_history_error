@@ -1,0 +1,20 @@
+Traceback (most recent call last):
+  File "/usr/lib/python3.5/threading.py", line 914, in _bootstrap_inner
+    self.run()
+  File "/usr/lib/python3.5/threading.py", line 862, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/nate/github/crytpo_predict/code/scrape_bittrex.py", line 216, in keep_saving
+    save_all_trade_history()
+  File "/home/nate/github/crytpo_predict/code/scrape_bittrex.py", line 85, in save_all_trade_history
+    history = get_trade_history(m)
+  File "/home/nate/github/crytpo_predict/code/scrape_bittrex.py", line 74, in get_trade_history
+    if res.json()['success']:
+  File "/home/nate/.local/lib/python3.5/site-packages/requests/models.py", line 866, in json
+    return complexjson.loads(self.text, **kwargs)
+  File "/usr/local/lib/python3.5/dist-packages/simplejson/__init__.py", line 516, in loads
+    return _default_decoder.decode(s)
+  File "/usr/local/lib/python3.5/dist-packages/simplejson/decoder.py", line 374, in decode
+    obj, end = self.raw_decode(s)
+  File "/usr/local/lib/python3.5/dist-packages/simplejson/decoder.py", line 404, in raw_decode
+    return self.scan_once(s, idx=_w(s, idx).end())
+simplejson.scanner.JSONDecodeError: Expecting value: line 1 column 1 (char 0)

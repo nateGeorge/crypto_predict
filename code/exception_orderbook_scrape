@@ -1,0 +1,22 @@
+Exception in thread Thread-110:
+Traceback (most recent call last):
+  File "/usr/lib/python3.5/threading.py", line 914, in _bootstrap_inner
+    self.run()
+  File "/usr/lib/python3.5/threading.py", line 862, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/nate/github/crytpo_predict/code/bittrex_test.py", line 254, in keep_saving
+  File "/home/nate/github/crytpo_predict/code/bittrex_test.py", line 238, in save_all_order_books
+    # buy_df.to_hdf(HOME_DIR + 'data/buy_orders.h5', key=key, mode='a')#, comp_level=9, complib='bzi)
+  File "/home/nate/github/crytpo_predict/code/bittrex_test.py", line 207, in save_order_book
+    df['24hr_chg'] = df['Last'] - df['PrevDay']
+  File "/home/nate/github/crytpo_predict/code/bittrex_test.py", line 101, in get_order_book
+    filename = HOME_DIR + 'data/trade_history/' + re.sub('-', '_', m) + '.csv.gz'
+  File "/home/nate/.local/lib/python3.5/site-packages/requests/models.py", line 866, in json
+    return complexjson.loads(self.text, **kwargs)
+  File "/usr/local/lib/python3.5/dist-packages/simplejson/__init__.py", line 516, in loads
+    return _default_decoder.decode(s)
+  File "/usr/local/lib/python3.5/dist-packages/simplejson/decoder.py", line 374, in decode
+    obj, end = self.raw_decode(s)
+  File "/usr/local/lib/python3.5/dist-packages/simplejson/decoder.py", line 404, in raw_decode
+    return self.scan_once(s, idx=_w(s, idx).end())
+simplejson.scanner.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
