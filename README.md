@@ -17,3 +17,7 @@ no pip package as of now.
 * port neural net model to data here
 * look for order book correlations to price movement
 * neural net with order book and price/vol history
+
+# installing TA-Lib
+first you need to install ta-lib: https://sourceforge.net/projects/ta-lib/files/ta-lib/
+may need some dependencies on Ubuntu: https://stackoverflow.com/questions/26053982/error-setup-script-exited-with-error-command-x86-64-linux-gnu-gcc-failed-wit

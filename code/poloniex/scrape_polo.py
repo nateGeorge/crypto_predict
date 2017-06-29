@@ -1,5 +1,6 @@
 from poloniex import Poloniex
 import os
+import time
 import pandas as pd
 from datetime import datetime
 from threading import Thread
@@ -25,14 +26,16 @@ def make_data_dirs():
     """
     Checks if data directory exists, if not, creates it.
     """
-    dds = ['data',
-            'data/order_books',
-            'data/order_books/poloniex',
-            'data/order_books/bittrex']
+    exchanges = ['poloniex', 'bittrex']
+    folds = ['order_books', 'trade_history']
+    data_folders = ['data/' + f + '/' for f in folds]
+    dds = ['data'] + data_folders + \
+            [d + e for d in data_folders for e in exchanges]
     dirs = [HOME_DIR + d for d in dds]
     for d in dirs:
         if not os.path.exists(d):
             os.mkdir(d)
+
 
 HOME_DIR = get_home_dir()
 make_data_dirs()
@@ -108,9 +111,69 @@ def continuously_save_order_books(interval=60):
     thread.start()
 
 
-def get_entire_trade_history():
+def get_trade_history(market='BTC_SC'):
+    cur_ts = int(time.time())
+    past = cur_ts - 60*60*24*7*4  # subtract 4 weeks
+    h = polo.marketTradeHist(currencyPair=market, start=past, end=cur_ts)
+    full_df = pd.io.json.json_normalize(h)
+    full_df['date'] = pd.to_datetime(full_df['date'])
+    earliest = 0
+    cur_earliest = full_df.iloc[-1]['date'].value / 10**9
+    while cur_earliest != earliest:
+        earliest = cur_earliest
+        past = earliest - 60*60*24*7*4  # subtract 4 weeks
+        print('scraping another time...')
+        start = time.time()
+        h = polo.marketTradeHist(currencyPair=market, start=past, end=earliest)
+        elapsed = time.time() - start
+        # max api calls are 6/sec, don't want to get banned...
+        if elapsed < 1/6.:
+            print('scraping too fast, sleeping...')
+            time.sleep(1/5. - elapsed)
+
+        df = pd.io.json.json_normalize(h)
+        df['date'] = pd.to_datetime(df['date'])
+        full_df = full_df.append(df)
+        cur_earliest = df.iloc[-1]['date'].value / 10**9
+
+    # sometimes some duplicates
+    full_df.drop_duplicates(inplace=True)
+    full_df.set_index('date', inplace=True)
+    # I like it sorted from oldest to newest
+    full_df.sort_index()
+    for col in ['amount', 'rate', 'total']:
+        full_df[col] = pd.to_numeric(full_df[col])
+
+    return full_df
+
+
+def append_trade_history(market):
     """
+    First checks what the latest date is in the dataframe, then scrapes the
+    trade history from the current time back to then.
     """
+    pass
+
+
+def save_trade_history(df, market):
+    """
+    Saves a dataframe of the trade history for a market.
+    """
+    datapath = HOME_DIR + 'data/trade_history/poloniex/'
+    filename = datapath + 'trade_history_' + market + '.csv.gz'
+    df.to_csv(filename, compression='gzip')
+
+
+def save_all_trade_history():
+    ticks = polo.returnTicker()
+    pairs = ticks.keys()
+    for c in pairs:
+        print('scaping', c)
+        df = get_trade_history(c)
+        print('saving', c)
+        save_trade_history(df, c)
+
+
 
 
 # TODO: get all trade history
