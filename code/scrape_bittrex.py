@@ -110,9 +110,10 @@ def read_history(market):
 
 
 def get_order_book(market):
-    res = requests.get('https://bittrex.com/api/v1.1/public/getorderbook?market=' + market + '&type=both&depth=50000')
-    timestamp = pd.to_datetime(datetime.now())
     try:
+        # was having some weird error here, so moved the requests.get into the try block
+        res = requests.get('https://bittrex.com/api/v1.1/public/getorderbook?market=' + market + '&type=both&depth=50000')
+        timestamp = pd.to_datetime(datetime.now())
         if res.json()['success']:
             orders = res.json()['result']
             if orders['buy'] is None and orders['sell'] is None:
