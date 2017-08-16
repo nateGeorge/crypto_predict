@@ -1,5 +1,7 @@
 import pandas as pd
+from glob import iglob
 import os
+
 
 def get_home_dir(repo_name='crypto_predict'):
     cwd = os.getcwd()
@@ -30,3 +32,8 @@ def read_trade_hist(market='BTC_LTC'):
     filename = datapath + 'trade_history_' + market + '.csv.gz'
     df = pd.read_csv(filename, index_col='date', parse_dates=True)
     return df
+
+def get_all_trade_pairs():
+    datapath = HOME_DIR + 'data/trade_history/poloniex/'
+    pairs = [f.split('/')[-1][14:-7] for f in iglob(datapath + '*.csv.gz')]
+    return pairs
