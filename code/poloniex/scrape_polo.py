@@ -1,26 +1,21 @@
-from poloniex import Poloniex
+# core
 import os
 import time
-import pandas as pd
 from datetime import datetime
 from threading import Thread
 
+# installed
+from poloniex import Poloniex
+import pandas as pd
+
+# internal
+# only works if run from home git directory
+from code.utils import get_home_dir
+
+HOME_DIR = get_home_dir()
 key = os.environ.get('polo_key')
 sec = os.environ.get('polo_sec')
 polo = Poloniex(key, sec)
-
-
-def get_home_dir(repo_name='crypto_predict'):
-    cwd = os.getcwd()
-    cwd_list = cwd.split('/')
-    repo_position = [i for i, s in enumerate(cwd_list) if s == repo_name]
-    if len(repo_position) > 1:
-        print("error!  more than one intance of repo name in path")
-        return None
-
-    home_dir = '/'.join(cwd_list[:repo_position[0] + 1]) + '/'
-    return home_dir
-
 
 def make_data_dirs():
     """
@@ -36,9 +31,8 @@ def make_data_dirs():
         if not os.path.exists(d):
             os.mkdir(d)
 
-
-HOME_DIR = get_home_dir()
 make_data_dirs()
+TRADE_DATA_DIR = HOME_DIR + 'data/trade_history/poloniex/'
 
 def get_all_orderbooks():
     """
@@ -111,9 +105,32 @@ def continuously_save_order_books(interval=60):
     thread.start()
 
 
-def get_trade_history(market='BTC_SC'):
-    cur_ts = int(time.time())
-    past = cur_ts - 60*60*24*7*4  # subtract 4 weeks
+def get_trade_history(market='BTC_BCN'):
+    # first check the latest date on data already there
+    datafile = TRADE_DATA_DIR + market + '.csv.gz'
+    if os.path.exists(datafile):
+        cur_df = pd.read_csv(datafile, chunksize=1)
+        first = cur_df.get_chunk(1)
+        latest = first.iloc[0]
+        # .value gets nanoseconds since epoch
+        latest_ts = pd.to_datetime(latest['date']).value / 10**9
+        # get current timestamp in UTC...tradehist method takes utc times
+        d = datetime.datetime.utcnow()
+        epoch = datetime.datetime(1970,1,1)
+        cur_ts = (d - epoch).total_seconds()
+        if cur_ts - latest_ts > 7200:
+            print('scraped within last 2 hours, not scraping again...')
+            return None
+        else:
+            print('scraping fresh')
+    else:
+        print('scraping new, no file exists')
+        # get current timestamp in UTC...tradehist method takes utc times
+        d = datetime.datetime.utcnow()
+        epoch = datetime.datetime(1970,1,1)
+        cur_ts = (d - epoch).total_seconds()
+    # get past time, subtract 4 weeks
+    past = cur_ts - 60*60*24*7*4
     h = polo.marketTradeHist(currencyPair=market, start=past, end=cur_ts)
     full_df = pd.io.json.json_normalize(h)
     full_df['date'] = pd.to_datetime(full_df['date'])
@@ -159,8 +176,7 @@ def save_trade_history(df, market):
     """
     Saves a dataframe of the trade history for a market.
     """
-    datapath = HOME_DIR + 'data/trade_history/poloniex/'
-    filename = datapath + 'trade_history_' + market + '.csv.gz'
+    filename = TRADE_DATA_DIR + market + '.csv.gz'
     df.to_csv(filename, compression='gzip')
 
 
@@ -170,8 +186,9 @@ def save_all_trade_history():
     for c in pairs:
         print('scaping', c)
         df = get_trade_history(c)
-        print('saving', c)
-        save_trade_history(df, c)
+        if df is not None:
+            print('saving', c)
+            save_trade_history(df, c)
 
 
 
