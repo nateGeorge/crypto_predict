@@ -199,7 +199,7 @@ def save_trade_history(df, market, update):
 
 def save_all_trade_history():
     ticks = polo.returnTicker()
-    pairs = ticks.keys()
+    pairs = sorted(ticks.keys())
     for c in pairs:
         print('checking', c)
         df, update = get_trade_history(c)
