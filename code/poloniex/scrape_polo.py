@@ -129,7 +129,7 @@ def get_trade_history(market='BTC_BCN'):
         cur_ts = (d - epoch).total_seconds()
         if (cur_ts - latest_ts) < 7200:
             print('scraped within last 2 hours, not scraping again...')
-            return None
+            return None, None
         else:
             print('scraping updates')
             update = True
@@ -177,7 +177,7 @@ def get_trade_history(market='BTC_BCN'):
     for col in ['amount', 'rate', 'total']:
         full_df[col] = pd.to_numeric(full_df[col])
 
-    return full_df
+    return full_df, update
 
 
 def save_trade_history(df, market, update):
@@ -190,7 +190,7 @@ def save_trade_history(df, market, update):
                             parse_dates=['date'],
                             infer_datetime_format=True)
         old_df.set_index('date', inplace=True)
-        full_df = old_df.merge(df)
+        full_df = old_df.append(df)
         full_df.drop_duplicates(inplace=True)
         full_df.to_csv(filename, compression='gzip')
     else:
