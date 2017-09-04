@@ -117,6 +117,7 @@ def continuously_save_order_books(interval=60):
 def get_trade_history(market='BTC_BCN'):
     # first check the latest date on data already there
     datafile = TRADE_DATA_DIR + market + '.csv.gz'
+    latest_ts = None
     if os.path.exists(datafile):
         cur_df = pd.read_csv(datafile, chunksize=1)
         first = cur_df.get_chunk(1)
