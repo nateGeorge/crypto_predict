@@ -115,29 +115,36 @@ def get_trade_history(market='BTC_BCN'):
         # .value gets nanoseconds since epoch
         latest_ts = pd.to_datetime(latest['date']).value / 10**9
         # get current timestamp in UTC...tradehist method takes utc times
-        d = datetime.datetime.utcnow()
-        epoch = datetime.datetime(1970,1,1)
+        d = datetime.utcnow()
+        epoch = datetime(1970, 1, 1)
         cur_ts = (d - epoch).total_seconds()
-        if cur_ts - latest_ts > 7200:
+        if (cur_ts - latest_ts) < 7200:
             print('scraped within last 2 hours, not scraping again...')
             return None
         else:
             print('scraping fresh')
+            update = True
     else:
         print('scraping new, no file exists')
+        update = False
         # get current timestamp in UTC...tradehist method takes utc times
         d = datetime.datetime.utcnow()
-        epoch = datetime.datetime(1970,1,1)
+        epoch = datetime.datetime(1970, 1, 1)
         cur_ts = (d - epoch).total_seconds()
     # get past time, subtract 4 weeks
     past = cur_ts - 60*60*24*7*4
     h = polo.marketTradeHist(currencyPair=market, start=past, end=cur_ts)
     full_df = pd.io.json.json_normalize(h)
     full_df['date'] = pd.to_datetime(full_df['date'])
-    earliest = 0
+    if latest_ts is None:
+        earliest = 0
+    else:
+        earliest = latest_ts
     cur_earliest = full_df.iloc[-1]['date'].value / 10**9
-    while cur_earliest != earliest:
-        earliest = cur_earliest
+    while cur_earliest != earliest and cur_earliest !< earliest:
+        if latest_ts is None:
+            earliest = cur_earliest
+
         past = earliest - 60*60*24*7*4  # subtract 4 weeks
         print('scraping another time...')
         start = time.time()
@@ -164,31 +171,32 @@ def get_trade_history(market='BTC_BCN'):
     return full_df
 
 
-def append_trade_history(market):
-    """
-    First checks what the latest date is in the dataframe, then scrapes the
-    trade history from the current time back to then.
-    """
-    pass
-
-
-def save_trade_history(df, market):
+def save_trade_history(df, market, update):
     """
     Saves a dataframe of the trade history for a market.
     """
     filename = TRADE_DATA_DIR + market + '.csv.gz'
-    df.to_csv(filename, compression='gzip')
+    if update:
+        old_df = pd.read_csv(filename,
+                            parse_dates=['date'],
+                            infer_datetime_format=True)
+        old_df.set_index('date', inplace=True)
+        full_df = old_df.merge(df)
+        full_df.drop_duplicates(inplace=True)
+        full_df.to_csv(filename, compression='gzip')
+    else:
+        df.to_csv(filename, compression='gzip')
 
 
 def save_all_trade_history():
     ticks = polo.returnTicker()
     pairs = ticks.keys()
     for c in pairs:
-        print('scaping', c)
-        df = get_trade_history(c)
+        print('checking', c)
+        df, update = get_trade_history(c)
         if df is not None:
             print('saving', c)
-            save_trade_history(df, c)
+            save_trade_history(df, c, update)
 
 
 
