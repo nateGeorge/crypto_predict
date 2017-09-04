@@ -1,5 +1,6 @@
 # core
 import os
+import sys
 import time
 from datetime import datetime
 from threading import Thread
@@ -8,9 +9,17 @@ from threading import Thread
 from poloniex import Poloniex
 import pandas as pd
 
-# internal
-# only works if run from home git directory
-from code.utils import get_home_dir
+
+def get_home_dir(repo='crypto_predict'):
+    cwd = os.getcwd()
+    cwd_list = cwd.split('/')
+    repo_position = [i for i, s in enumerate(cwd_list) if s == repo]
+    if len(repo_position) > 1:
+        print("error!  more than one intance of repo name in path")
+        return None
+
+    home_dir = '/'.join(cwd_list[:repo_position[0] + 1]) + '/'
+    return home_dir
 
 HOME_DIR = get_home_dir()
 key = os.environ.get('polo_key')
