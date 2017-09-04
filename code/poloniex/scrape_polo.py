@@ -137,8 +137,8 @@ def get_trade_history(market='BTC_BCN'):
         print('scraping new, no file exists')
         update = False
         # get current timestamp in UTC...tradehist method takes utc times
-        d = datetime.datetime.utcnow()
-        epoch = datetime.datetime(1970, 1, 1)
+        d = datetime.utcnow()
+        epoch = datetime(1970, 1, 1)
         cur_ts = (d - epoch).total_seconds()
     # get past time, subtract 4 weeks
     past = cur_ts - 60*60*24*7*4
