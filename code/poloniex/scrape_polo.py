@@ -141,7 +141,7 @@ def get_trade_history(market='BTC_BCN'):
     else:
         earliest = latest_ts
     cur_earliest = full_df.iloc[-1]['date'].value / 10**9
-    while cur_earliest != earliest and cur_earliest !< earliest:
+    while cur_earliest > earliest:
         if latest_ts is None:
             earliest = cur_earliest
 
