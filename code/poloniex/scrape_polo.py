@@ -131,7 +131,7 @@ def get_trade_history(market='BTC_BCN'):
             print('scraped within last 2 hours, not scraping again...')
             return None
         else:
-            print('scraping fresh')
+            print('scraping updates')
             update = True
     else:
         print('scraping new, no file exists')
