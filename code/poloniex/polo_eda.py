@@ -29,7 +29,7 @@ def read_orderbook(market='BTC_LTC'):
 
 def read_trade_hist(market='BTC_LTC'):
     datapath = HOME_DIR + 'data/trade_history/poloniex/'
-    filename = datapath + 'trade_history_' + market + '.csv.gz'
+    filename = datapath + market + '.csv.gz'
     df = pd.read_csv(filename, index_col='date', parse_dates=True)
     return df
 

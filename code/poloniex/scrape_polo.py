@@ -146,12 +146,18 @@ def get_trade_history(market='BTC_BCN'):
     h = polo.marketTradeHist(currencyPair=market, start=past, end=cur_ts)
     full_df = pd.io.json.json_normalize(h)
     full_df['date'] = pd.to_datetime(full_df['date'])
+    # very_earliest keeps track of the last date in the saved df on disk
     if latest_ts is None:
-        earliest = 0
+        very_earliest = 0
     else:
-        earliest = latest_ts
+        very_earliest = latest_ts
+
+    earliest = 0
     cur_earliest = full_df.iloc[-1]['date'].value / 10**9
-    while cur_earliest > earliest:
+    # if we get to the start of the data, quit, or if the earliest currently
+    # scraped date is less than the earliest in the saved df on disk, break
+    # the loop
+    while cur_earliest != earliest and cur_earliest > very_earliest:
         if latest_ts is None:
             earliest = cur_earliest
 
@@ -174,7 +180,7 @@ def get_trade_history(market='BTC_BCN'):
     full_df.drop_duplicates(inplace=True)
     full_df.set_index('date', inplace=True)
     # I like it sorted from oldest to newest
-    full_df.sort_index()
+    full_df.sort_index(inplace=True)
     for col in ['amount', 'rate', 'total']:
         full_df[col] = pd.to_numeric(full_df[col])
 
@@ -187,12 +193,15 @@ def save_trade_history(df, market, update):
     """
     filename = TRADE_DATA_DIR + market + '.csv.gz'
     if update:
+        # TODO: need to get rid of reading the old DF, and just make_history_df
+        # sure there are no overlapping points, then write csv with mode='a'
         old_df = pd.read_csv(filename,
                             parse_dates=['date'],
                             infer_datetime_format=True)
         old_df.set_index('date', inplace=True)
         full_df = old_df.append(df)
         full_df.drop_duplicates(inplace=True)
+        full_df.sort_index(inplace=True)
         full_df.to_csv(filename, compression='gzip')
     else:
         df.to_csv(filename, compression='gzip')
@@ -215,3 +224,7 @@ def save_all_trade_history():
 # get all market depth and subscribe to updates, on major change (buy/sell)
 # use marketTradeHist
 # notify telegram bot etc
+
+if __name__ == "__main__":
+    # updates all trade histories
+    save_all_trade_history()
