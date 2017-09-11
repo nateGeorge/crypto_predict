@@ -18,7 +18,7 @@ def get_home_dir(repo_name='crypto_predict'):
 HOME_DIR = get_home_dir()
 
 
-def read_orderbook(market='BTC_LTC'):
+def read_orderbook(market='BTC_AMP'):
     datapath = HOME_DIR + 'data/order_books/poloniex/'
     buy_file = datapath + 'buy_orders_' + market + '.csv.gz'
     sell_file = datapath + 'sell_orders_' + market + '.csv.gz'
@@ -27,10 +27,13 @@ def read_orderbook(market='BTC_LTC'):
     return bdf, sdf
 
 
-def read_trade_hist(market='BTC_LTC'):
+def read_trade_hist(market='BTC_AMP', drop=0):
     datapath = HOME_DIR + 'data/trade_history/poloniex/'
     filename = datapath + market + '.csv.gz'
     df = pd.read_csv(filename, index_col='date', parse_dates=True)
+    # sometimes might want to drop the first few thousand points because
+    # they are crazy
+    df = df.iloc[drop:]
     return df
 
 def get_all_trade_pairs():

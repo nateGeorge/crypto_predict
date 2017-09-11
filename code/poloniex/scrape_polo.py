@@ -119,11 +119,20 @@ def get_trade_history(market='BTC_BCN'):
     datafile = TRADE_DATA_DIR + market + '.csv.gz'
     latest_ts = None
     if os.path.exists(datafile):
-        cur_df = pd.read_csv(datafile, chunksize=1)
-        first = cur_df.get_chunk(1)
-        latest = first.iloc[0]
-        # .value gets nanoseconds since epoch
-        latest_ts = pd.to_datetime(latest['date']).value / 10**9
+        # right now the csvs are saved as earliest data in the top
+        # and latest data in the bottom.  Need to fix this, but for now
+        # this code is not run
+        earliest_to_latest = False
+        if earliest_to_latest:
+            cur_df = pd.read_csv(datafile, chunksize=1)
+            first = cur_df.get_chunk(1)
+            latest = first.iloc[0]
+            # .value gets nanoseconds since epoch
+            latest_ts = pd.to_datetime(latest['date']).value / 10**9
+        else:
+            df = pd.read_csv(datafile, index_col='date', parse_dates=True)
+            latest_ts = df.index[-1].value / 10**9
+
         # get current timestamp in UTC...tradehist method takes utc times
         d = datetime.utcnow()
         epoch = datetime(1970, 1, 1)
@@ -158,9 +167,7 @@ def get_trade_history(market='BTC_BCN'):
     # scraped date is less than the earliest in the saved df on disk, break
     # the loop
     while cur_earliest != earliest and cur_earliest > very_earliest:
-        if latest_ts is None:
-            earliest = cur_earliest
-
+        earliest = cur_earliest
         past = earliest - 60*60*24*7*4  # subtract 4 weeks
         print('scraping another time...')
         start = time.time()
