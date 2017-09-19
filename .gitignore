@@ -1,3 +1,13 @@
+# plotly plots
+*.html
+
+# tensorflow models
+*.meta
+*.index
+*.data-*
+*checkpoint
+
+
 data/*
 data/
 
