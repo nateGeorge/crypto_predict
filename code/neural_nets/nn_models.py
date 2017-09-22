@@ -302,6 +302,10 @@ class nn_model:
         self.train_pts = train_pts
         self.test_pts = test_pts
         self.model = model
+        self.ref_targs = None
+        self.last_preds = None
+        self.past_preds = None
+        self.past_targs = None
 
 
     def create_data(self, market=None):
@@ -460,7 +464,7 @@ class nn_model:
         save_path = saver.save(self.sess, self.save_model_path)
 
 
-    def get_all_preds(self, plot_data=True, nb=False):
+    def get_all_preds(self, plot_data=False, nb=False):
         fd = {self.x: self.feats, self.y: self.targs, self.keep_prob: 1.0}
         all_preds = self.sess.run(self.pred, feed_dict=fd)
         targ_df = pd.DataFrame({'close': self.targs.flatten()})
@@ -473,42 +477,97 @@ class nn_model:
                    go.Scatter(x=self.rs[rs_idx:].index, y=resc_preds.close, name='predictions')]
             iplot(data) if nb else plot(data)
 
+        self.all_past_preds = resc_preds
+        self.all_past_targs = resc_targs
 
-    def pred_future_points_all(sc_df,
-                           teston=30,
-                           history=300,
-                           future=180,
-                           mva=30):
+        return resc_targs, resc_preds
+
+
+    def get_past_preds(self, past=2000):
+        self.past = past
+        feats, targs = dp.create_hist_feats(self.sc_df.iloc[-past-self.test_pts:],
+                                            history=self.history,
+                                            future=self.future)
+        fd = {self.x: feats, self.y: targs, self.keep_prob: 1}
+        preds = self.sess.run(self.pred, feed_dict=fd)
+        targ_df = pd.DataFrame({'close': targs.flatten()})
+        pred_df = pd.DataFrame({'close': preds.flatten()})
+        start_idx = self.future + self.history - past - self.test_pts
+        resc_preds = dp.reform_data(self.rs[start_idx:], pred_df, self.scalers)
+        resc_targs = dp.reform_data(self.rs[start_idx:], targ_df, self.scalers)
+
+        self.past_preds = resc_preds
+        self.past_targs = resc_targs
+
+        return resc_targs, resc_preds
+
+
+    def pred_future_points(self):
         """
-        Predicts the future points one at a time in the 'teston' section.
-        teston must be at least the size of the mva used to normalize, otherwise ref_targs comes back all na's
+        Predicts the future points one at a time in the self.test_pts section.
+        test_pts must be at least the size of the mva used to normalize, otherwise ref_targs comes back all na's
         """
         last_preds = None
-        start = -(teston + history + future)
-        feats, targs = dp.create_feats_to_current(sc_df.iloc[start:], history=history, future=future)
+        start = -(self.test_pts + self.history + self.future)
+        feats, targs = dp.create_feats_to_current(self.sc_df.iloc[start:],
+                                                    history=self.history,
+                                                    future=self.future)
+        print(feats.shape)
         targ_df = pd.DataFrame({'close': targs.flatten()})
-        ref_targs = dp.reform_data(rs[-(teston + mva):], targ_df, scalers)
-        for i in range(teston):
-            preds = sess.run(pred, feed_dict={x: feats[i:future + i - teston], y: targs[i].reshape(-1, 1), keep_prob: 1})
-            fut_idx = future - 1 - teston
-            future_preds = preds[fut_idx:]
-            resc_preds = dp.rescale_data(pd.DataFrame({'close': future_preds.flatten()}), scalers)
-            ref_future_pred = dp.reform_prediction(rs, resc_preds.close.values)
+        ref_targs = dp.reform_data(self.rs[-(self.test_pts + self.mva):], targ_df, self.scalers)
+        for i in range(self.test_pts):
+            fd = {self.x: feats[i].reshape(1, self.history, -1),
+                  self.y: targs[i].reshape(-1, 1),
+                  self.keep_prob: 1}
+            pred = self.sess.run(self.pred, feed_dict=fd)
+            fut_df = pd.DataFrame({'close': pred.flatten()})
+            resc_preds = dp.rescale_data(fut_df, self.scalers)
+            ref_future_pred = dp.reform_prediction(self.rs, resc_preds.close.values)
             ref_future_pred = pd.DataFrame({'close': ref_future_pred})
 
-            last_pred = ref_future_pred.iloc[-1:].close
+            # last_pred = ref_future_pred.iloc[-1:].close
             if last_preds is None:
                 last_preds = last_pred
             else:
                 last_preds = last_preds.append(last_pred)
 
-        future_idx = sc_df.index[-teston:]
+        future_idx = self.sc_df.index[-last_preds.shape[0]:]
         last_preds = pd.DataFrame(last_preds)
         last_preds.set_index(future_idx, inplace=True)
 
+        self.ref_targs = ref_targs
+        self.last_preds = last_preds
+
         return ref_targs, last_preds
 
-    rft, rfp = pred_future_points_all(sc_df)
+
+    def plot_future_preds(self, nb=False):
+        if self.last_preds is None:
+            _, _ = self.pred_future_points()
+
+        if self.past_preds is None:
+            _, _ = self.get_past_preds()
+
+        start_idx = self.history + self.future - self.past - self.test_pts
+        data = [go.Scatter(x=self.sc_df[start_idx:-self.test_pts].index, y=self.past_targs.close, name='actual'),
+               go.Scatter(x=self.sc_df[start_idx:-self.test_pts].index, y=self.past_preds.close, name='predictions'),
+               go.Scatter(x=self.sc_df[-self.test_pts:].index, y=self.ref_targs.close, name='actual future'),
+               go.Scatter(x=self.sc_df[-self.test_pts:].index, y=self.last_preds.close, name='future predictions')]
+        iplot(data) if nb else plot(data)
+
+
+    def score_future_preds(self):
+        """
+        uses stepwise future predicts and targs to calculate MSE score
+        """
+        mse = tf.losses.mean_squared_error(self.last_preds, self.ref_targs)
+        loss = tf.reduce_mean(mse, name='future_mse_loss')
+        l = self.sess.run(loss)
+
+        mse = tf.losses.mean_squared_error(nn.last_preds, nn.ref_targs)
+        loss = tf.reduce_mean(mse, name='future_mse_loss')
+        l = nn.sess.run(loss)
+
 
 if __name__=="__main__":
     # simple_nn_model_prototype()
@@ -517,4 +576,4 @@ if __name__=="__main__":
     nn.create_graph()
     nn.set_hyperparameters()
     nn.train_net()
-    nn.get_all_preds()
+    nn.plot_future_preds()

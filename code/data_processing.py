@@ -60,6 +60,8 @@ def reform_data(df, scaled_df, scalers, mva=30):
             rolling_mean = rolling_mean[-scaled_df.shape[0]:]
         else:
             rolling_mean = df[c].rolling(window=mva).mean().bfill()
+            if rolling_mean.shape[0] > unscaled.shape[0]:
+                rolling_mean = rolling_mean[-unscaled.shape[0]:]
 
         unsc = unscaled * rolling_mean
         unsc_dict[c] = unsc
