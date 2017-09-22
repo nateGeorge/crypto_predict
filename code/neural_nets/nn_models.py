@@ -292,8 +292,8 @@ class nn_model:
                 future=180,
                 history=300,
                 mva=30,
-                train_pts=10000,
-                test_pts=1000,
+                train_pts=30000,
+                test_pts=3000,
                 model='simple_fc'):
         self.market = market
         self.future = future
@@ -302,10 +302,13 @@ class nn_model:
         self.train_pts = train_pts
         self.test_pts = test_pts
         self.model = model
-        self.ref_targs = None
-        self.last_preds = None
+        self.future_targs = None
+        self.future_preds = None
         self.past_preds = None
         self.past_targs = None
+        self.future_scores = [] # list for holding mse of future predictions
+        self.past_scores = []
+        self.rs = None
 
 
     def create_data(self, market=None):
@@ -381,7 +384,7 @@ class nn_model:
         return f_batches, t_batches
 
 
-    def print_stats(self, session, feed_dict, mse):
+    def print_stats(self, session, feed_dict):
         """
         Print information about loss and validation accuracy
         : session: Current TensorFlow session
@@ -390,7 +393,7 @@ class nn_model:
         : cost: TensorFlow cost function
         : accuracy: TensorFlow accuracy function
         """
-        loss = session.run(mse, feed_dict=feed_dict)
+        loss = session.run(self.loss, feed_dict=feed_dict)
         # val_loss = session.run(accuracy, feed_dict={x: valid_features, y: valid_labels, keep_prob: 1.})
 
         print('loss = {0}'.format(loss))
@@ -401,6 +404,18 @@ class nn_model:
         fc1 = self.fully_conn(flat, 500)
         drop1 = tf.nn.dropout(fc1, keep_prob)
         out = tf.layers.dense(drop1, 1)  # need a linear activation on the output to work
+        return out
+
+
+    def simple_3layer_fc(self, x, keep_prob):
+        flat = tf.contrib.layers.flatten(x)
+        fc1 = self.fully_conn(flat, 500)
+        drop1 = tf.nn.dropout(fc1, keep_prob)
+        fc2 = self.fully_conn(drop1, 800)
+        drop2 = tf.nn.dropout(fc2, keep_prob)
+        fc3 = self.fully_conn(drop2, 300)
+        drop3 = tf.nn.dropout(fc3, keep_prob)
+        out = tf.layers.dense(drop3, 1)  # need a linear activation on the output to work
         return out
 
 
@@ -431,6 +446,9 @@ class nn_model:
         self.mse = tf.losses.mean_squared_error(self.pred, self.y)
         self.loss = tf.reduce_mean(self.mse, name='mse_mean')
         tf.summary.scalar('loss', self.loss)
+        tf.summary.scalar('mse', self.mse)
+        # can also minimize loss, but that number is typically way smaller than
+        # mse because it's averaged
         self.optimizer = tf.train.AdamOptimizer().minimize(self.loss)
 
         self.save_model_path = './' + self.model
@@ -457,7 +475,7 @@ class nn_model:
 
             print('Epoch {:>2}:  '.format(epoch + 1), end='')
             fd = {self.x: feature_batch, self.y: label_batch, self.keep_prob: 1.}
-            self.print_stats(self.sess, fd, self.mse)
+            self.print_stats(self.sess, fd)
 
         # Save Model
         saver = tf.train.Saver()
@@ -483,18 +501,24 @@ class nn_model:
         return resc_targs, resc_preds
 
 
-    def get_past_preds(self, past=2000):
-        self.past = past
-        feats, targs = dp.create_hist_feats(self.sc_df.iloc[-past-self.test_pts:],
+    def get_past_preds(self, past=None):
+        """
+        past can be used to lessen the amount of points plotted
+        """
+        if past is None:
+            self.past = self.train_pts - self.test_pts
+        else:
+            self.past = past
+        start = -(self.past + self.test_pts)
+        feats, targs = dp.create_hist_feats(self.sc_df.iloc[start:-self.test_pts],
                                             history=self.history,
                                             future=self.future)
         fd = {self.x: feats, self.y: targs, self.keep_prob: 1}
         preds = self.sess.run(self.pred, feed_dict=fd)
         targ_df = pd.DataFrame({'close': targs.flatten()})
         pred_df = pd.DataFrame({'close': preds.flatten()})
-        start_idx = self.future + self.history - past - self.test_pts
-        resc_preds = dp.reform_data(self.rs[start_idx:], pred_df, self.scalers)
-        resc_targs = dp.reform_data(self.rs[start_idx:], targ_df, self.scalers)
+        resc_preds = dp.reform_data(self.rs[start:-self.test_pts], pred_df, self.scalers)
+        resc_targs = dp.reform_data(self.rs[start:-self.test_pts], targ_df, self.scalers)
 
         self.past_preds = resc_preds
         self.past_targs = resc_targs
@@ -502,19 +526,26 @@ class nn_model:
         return resc_targs, resc_preds
 
 
-    def pred_future_points(self):
+    def pred_future_points_cheating(self):
         """
         Predicts the future points one at a time in the self.test_pts section.
-        test_pts must be at least the size of the mva used to normalize, otherwise ref_targs comes back all na's
+        test_pts must be at least the size of the mva used to normalize, otherwise future_targs comes back all na's
+
+        This version uses the actual data up to the point before the prediction,
+        when actually there won't be data starting at the first future point.
+        So the predictions look better than they actually are.
         """
         last_preds = None
         start = -(self.test_pts + self.history + self.future)
+        rs_start = -(self.test_pts + self.mva - 1)
         feats, targs = dp.create_feats_to_current(self.sc_df.iloc[start:],
                                                     history=self.history,
                                                     future=self.future)
-        print(feats.shape)
         targ_df = pd.DataFrame({'close': targs.flatten()})
-        ref_targs = dp.reform_data(self.rs[-(self.test_pts + self.mva):], targ_df, self.scalers)
+        future_targs = dp.reform_data(self.rs[-(self.test_pts + self.mva):],
+                                    targ_df,
+                                    self.scalers,
+                                    mva=self.mva)
         for i in range(self.test_pts):
             fd = {self.x: feats[i].reshape(1, self.history, -1),
                   self.y: targs[i].reshape(-1, 1),
@@ -522,10 +553,11 @@ class nn_model:
             pred = self.sess.run(self.pred, feed_dict=fd)
             fut_df = pd.DataFrame({'close': pred.flatten()})
             resc_preds = dp.rescale_data(fut_df, self.scalers)
-            ref_future_pred = dp.reform_prediction(self.rs, resc_preds.close.values)
+            ref_future_pred = dp.reform_prediction(self.rs[rs_start + i:rs_start + i + self.mva - 1],
+                                                    resc_preds.close.values,
+                                                    mva=self.mva)
             ref_future_pred = pd.DataFrame({'close': ref_future_pred})
 
-            # last_pred = ref_future_pred.iloc[-1:].close
             if last_preds is None:
                 last_preds = ref_future_pred
             else:
@@ -535,43 +567,144 @@ class nn_model:
         last_preds = pd.DataFrame(last_preds)
         last_preds.set_index(future_idx, inplace=True)
 
-        self.ref_targs = ref_targs
-        self.last_preds = last_preds
+        self.future_targs = future_targs
+        self.future_preds = last_preds
 
-        return ref_targs, last_preds
+        return future_targs, last_preds
+
+
+    def pred_future_points(self):
+        """
+        Predicts the future points one at a time in the self.test_pts section.
+        test_pts must be at least the size of the mva used to normalize,
+        otherwise future_targs comes back all na's
+        """
+        fut_preds = None
+        start = -(self.test_pts + self.history + self.future)
+        rs_start = -(self.test_pts + self.mva - 1)
+        feats, targs = dp.create_feats_to_current(self.sc_df.iloc[start:],
+                                                    history=self.history,
+                                                    future=self.future)
+        targ_df = pd.DataFrame({'close': targs.flatten()})
+        future_targs = dp.reform_data(self.rs[-(self.test_pts + self.mva):],
+                                    targ_df,
+                                    self.scalers,
+                                    mva=self.mva)
+        for i in range(self.test_pts):
+            fd = {self.x: feats[i].reshape(1, self.history, -1),
+                  self.y: targs[i].reshape(-1, 1),
+                  self.keep_prob: 1}
+            pred = self.sess.run(self.pred, feed_dict=fd)
+            fut_df = pd.DataFrame({'close': pred.flatten()})
+            if fut_preds is None:
+                fut_preds = fut_df
+            else:
+                fut_preds = fut_preds.append(fut_df)
+
+        resc_preds = dp.rescale_data(fut_preds, self.scalers)
+        # this method has the problem that small trends incur
+        # positive feedback, sending the predictions wildly off-target.
+        # ref_future_pred = dp.reform_future_predictions(self.rs[rs_start:-self.test_pts],
+        #                                                resc_preds.close.values,
+        #                                                mva=self.mva)
+
+        ref_future_pred = dp.reform_future_predictions_mild(self.rs[rs_start:-self.test_pts],
+                                                       resc_preds.close.values,
+                                                       mva=self.mva)
+
+        future_idx = self.sc_df.index[-ref_future_pred.shape[0]:]
+        ref_future_pred.set_index(future_idx, inplace=True)
+
+        self.future_targs = future_targs
+        self.future_preds = ref_future_pred
+
+        return future_targs, ref_future_pred
 
 
     def plot_future_preds(self, nb=False):
-        if self.last_preds is None:
+        if self.future_preds is None:
             _, _ = self.pred_future_points()
 
         if self.past_preds is None:
             _, _ = self.get_past_preds()
 
         start_idx = self.history + self.future - self.past - self.test_pts
-        data = [go.Scatter(x=self.sc_df[start_idx:-self.test_pts].index, y=self.past_targs.close, name='actual'),
-               go.Scatter(x=self.sc_df[start_idx:-self.test_pts].index, y=self.past_preds.close, name='predictions'),
-               go.Scatter(x=self.sc_df[-self.test_pts:].index, y=self.ref_targs.close, name='actual future'),
-               go.Scatter(x=self.sc_df[-self.test_pts:].index, y=self.last_preds.close, name='future predictions')]
+        data = [go.Scatter(x=self.past_targs.index, y=self.past_targs.close, name='actual'),
+               go.Scatter(x=self.past_preds.index, y=self.past_preds.close, name='predictions'),
+               go.Scatter(x=self.future_targs.index, y=self.future_targs.close, name='actual future'),
+               go.Scatter(x=self.future_preds.index, y=self.future_preds.close, name='future predictions')]
         iplot(data) if nb else plot(data)
 
 
-    def score_future_preds(self):
+    def score_preds(self, get_preds=False):
         """
         uses stepwise future predicts and targs to calculate MSE score
         """
-        mse = tf.losses.mean_squared_error(self.last_preds, self.ref_targs)
-        loss = tf.reduce_mean(mse, name='future_mse_loss')
-        l = self.sess.run(loss)
+        if get_preds:
+            _, _ = self.pred_future_points()
+            _, _ = self.get_past_preds()
 
-        mse = tf.losses.mean_squared_error(nn.last_preds, nn.ref_targs)
-        loss = tf.reduce_mean(mse, name='future_mse_loss')
-        l = nn.sess.run(loss)
+        past_mse = tf.losses.mean_squared_error(self.past_preds, self.past_targs)
+        past_loss = tf.reduce_mean(past_mse)
+        past_l = self.sess.run(past_loss)
+        self.past_scores.append(past_l)
+        fut_mse = tf.losses.mean_squared_error(self.future_preds, self.future_targs)
+        fut_loss = tf.reduce_mean(fut_mse)
+        fut_l = self.sess.run(fut_loss)
+        self.future_scores.append(fut_l)
+
+
+    def step_thru_and_score(self):
+        """
+        steps through entire dataset in chunks of 'datapoints', and
+        trains on datapoints - test_pts
+
+        currently high loss on last chunk -- check it sometime
+        probably the problem is in get_past_preds, because it's not indexing
+        based on the current feats
+        """
+        if self.rs is None:
+            print('loading/creating data...')
+            self.create_data()
+
+        num_chunks = self.rs.shape[0] // self.train_pts
+        # start from the end and work backwards
+        for i in range(1, num_chunks + 1):
+            print('on chunk', str(i), 'of', str(num_chunks))
+            start = self.sc_df.shape[0] - self.train_pts * i
+            end = self.sc_df.shape[0] - self.train_pts * (i - 1)
+            print(start, end)
+            self.feats, self.targs = dp.create_hist_feats(self.sc_df.iloc[start:end],
+                                                        history=self.history,
+                                                        future=self.future)
+            self.train_feats = self.feats[:-self.test_pts]
+            self.train_targs = self.targs[:-self.test_pts]
+
+            # reset model and fit, then score
+            self.create_graph()
+            self.set_hyperparameters()
+            self.train_net()
+            self.score_preds(get_preds=True)
+
 
 
 if __name__=="__main__":
+    """
+    experiment notes:
+    when the number of training points is 27,000, the loss seems to be jumpy
+    and actually mostly increase during trainin g, although the fits look ok.
+    Decreasing the betas from 0.9 and 0.999 to 0.8 and 0.9 seems to improve
+    stability, but the future predictions look much worse.
+
+    When the number of training pts is 7,000, the loss consistently goes down,
+    but the fits look about the same quality.
+
+    The simple 3layer FC model seems to perform really well on 30k training points,
+    although it trains kind of slow.  The future predictions are excellent.
+    """
     # simple_nn_model_prototype()
     nn = nn_model()
+    #nn.step_thru_and_score()
     nn.create_data()
     nn.create_graph()
     nn.set_hyperparameters()
