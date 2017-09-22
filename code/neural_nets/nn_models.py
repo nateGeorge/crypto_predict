@@ -527,9 +527,9 @@ class nn_model:
 
             # last_pred = ref_future_pred.iloc[-1:].close
             if last_preds is None:
-                last_preds = last_pred
+                last_preds = ref_future_pred
             else:
-                last_preds = last_preds.append(last_pred)
+                last_preds = last_preds.append(ref_future_pred)
 
         future_idx = self.sc_df.index[-last_preds.shape[0]:]
         last_preds = pd.DataFrame(last_preds)
