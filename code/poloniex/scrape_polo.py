@@ -6,6 +6,9 @@ from datetime import datetime
 from threading import Thread
 
 # installed
+# if running from the code/ folder, this will try to import
+# a module Poloniex from the folder.  Better to run from within the
+# poloniex folder as a result
 from poloniex import Poloniex
 import pandas as pd
 

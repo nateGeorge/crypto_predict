@@ -291,13 +291,15 @@ class nn_model:
                 market='BTC_AMP',
                 future=180,
                 history=300,
-                mva=30,
-                train_pts=30000,
-                test_pts=3000,
-                model='simple_fc'):
+                mva=None,
+                train_pts=10000,
+                test_pts=1000,
+                model='simple_8layer_fc'):
         self.market = market
         self.future = future
         self.history = history
+        # a mva of 'None' will not use mva scaling.  Still having trouble getting
+        # predictions to look good with mva scaling
         self.mva = mva
         self.train_pts = train_pts
         self.test_pts = test_pts
@@ -317,8 +319,9 @@ class nn_model:
 
         self.df = pe.read_trade_hist(self.market)
         self.rs = dp.resample_ohlc(self.df)
-        self.sc_df, self.scalers = dp.transform_data(self.rs, mva=self.mva)
-        self.feats, self.targs = dp.create_hist_feats(self.sc_df.iloc[-self.train_pts:],
+        self.sc_df, self.scalers = dp.transform_data(self.rs.iloc[-self.train_pts:],
+                                                    mva=self.mva)
+        self.feats, self.targs = dp.create_hist_feats(self.sc_df,
                                                     history=self.history,
                                                     future=self.future)
         self.train_feats = self.feats[:-self.test_pts]
@@ -353,6 +356,16 @@ class nn_model:
         return keep_prob
 
 
+    def learning_rate_input(self):
+        """
+        Return a Tensor for keep probability
+        : return: Tensor for keep probability.
+        """
+        # DONE: Implement Function
+        lr = tf.placeholder(tf.float32, name='learning_rate')
+        return lr
+
+
     def fully_conn(self, x_tensor, num_outputs):
         """
         Apply a fully connected layer to x_tensor using weight and bias
@@ -360,7 +373,9 @@ class nn_model:
         : num_outputs: The number of output that the new tensor should be.
         : return: A 2-D tensor where the second dimension is num_outputs.
         """
-        return tf.contrib.layers.fully_connected(x_tensor, num_outputs)
+        return tf.contrib.layers.fully_connected(x_tensor,
+                                                num_outputs,
+                                                activation_fn=tf.nn.elu)
 
 
     def make_batches(self, feats, targs, batchsize=32):
@@ -419,10 +434,36 @@ class nn_model:
         return out
 
 
-    def set_hyperparameters(self, epochs=15, batch_size=32, keep_prob=0.5):
+    def simple_8layer_fc(self, x, keep_prob):
+        flat = tf.contrib.layers.flatten(x)
+        fc1 = self.fully_conn(flat, 300)
+        drop1 = tf.nn.dropout(fc1, keep_prob)
+        fc2 = self.fully_conn(drop1, 400)
+        fc3 = self.fully_conn(fc2, 500)
+        drop3 = tf.nn.dropout(fc3, keep_prob)
+        fc4 = self.fully_conn(drop3, 500)
+        fc5 = self.fully_conn(fc4, 400)
+        drop5 = tf.nn.dropout(fc5, keep_prob)
+        fc6 = self.fully_conn(drop5, 300)
+        fc7 = self.fully_conn(fc6, 200)
+        drop7 = tf.nn.dropout(fc7, keep_prob)
+        fc8 = self.fully_conn(drop7, 100)
+        out = tf.layers.dense(fc8, 1)  # need a linear activation on the output to work
+        return out
+
+
+    def simple_lstm(self, x, keep_prob, lstm_size=300):
+        tf.contrib.rnn.BasicLSTMCell(lstm_size)
+
+
+    def set_hyperparameters(self, epochs=50, batch_size=32, keep_prob=0.5, lr=0.001):
+        """
+        must be called before create_graph()
+        """
         self.epochs = epochs
         self.batch_size = batch_size
         self.keep_probability = keep_prob
+        self.lr = lr
 
 
     def create_graph(self):
@@ -431,9 +472,11 @@ class nn_model:
         # Inputs
         self.x = self.data_input(self.feats)
         self.y = self.data_target()
+
         # confusingly, keep_prob is the placeholder, and keep_probability is
         # the float that holds the value
         self.keep_prob = self.keep_prob_input()
+        self.learning_rate = self.learning_rate_input()
 
         # Model
         # self.pred = simple_net(x, keep_prob)  # old way of doing it
@@ -449,7 +492,8 @@ class nn_model:
         tf.summary.scalar('mse', self.mse)
         # can also minimize loss, but that number is typically way smaller than
         # mse because it's averaged
-        self.optimizer = tf.train.AdamOptimizer().minimize(self.loss)
+
+        self.optimizer = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.loss)
 
         self.save_model_path = './' + self.model
         self.sess = tf.Session()
@@ -503,25 +547,43 @@ class nn_model:
 
     def get_past_preds(self, past=None):
         """
-        past can be used to lessen the amount of points plotted
+        past can be used to limit the amount of points plotted
+        need to double-check the math with the 'past' indexing
+        need to double-check the 'start' variable
         """
         if past is None:
             self.past = self.train_pts - self.test_pts
+            feats = self.train_feats
+            targs = self.train_targs
+            start = - self.train_pts + self.future + self.history
         else:
             self.past = past
-        start = -(self.past + self.test_pts)
-        feats, targs = dp.create_hist_feats(self.sc_df.iloc[start:-self.test_pts],
-                                            history=self.history,
-                                            future=self.future)
+            start = -(self.past + self.test_pts)
+            feats, targs = dp.create_hist_feats(self.sc_df.iloc[start:-self.test_pts],
+                                                history=self.history,
+                                                future=self.future)
+
         fd = {self.x: feats, self.y: targs, self.keep_prob: 1}
         preds = self.sess.run(self.pred, feed_dict=fd)
         targ_df = pd.DataFrame({'close': targs.flatten()})
         pred_df = pd.DataFrame({'close': preds.flatten()})
-        resc_preds = dp.reform_data(self.rs[start:-self.test_pts], pred_df, self.scalers)
-        resc_targs = dp.reform_data(self.rs[start:-self.test_pts], targ_df, self.scalers)
+        resc_preds = dp.reform_data(self.rs[start:-self.test_pts],
+                                    pred_df,
+                                    self.scalers,
+                                    mva=self.mva)
+        resc_targs = dp.reform_data(self.rs[start:-self.test_pts],
+                                    targ_df,
+                                    self.scalers,
+                                    mva=self.mva)
 
-        self.past_preds = resc_preds
+        if self.mva is None:
+            # if past is not None, probably need to change this indexing...
+            idx = self.rs[start:-self.test_pts].index
+            resc_targs.set_index(idx, inplace=True)
+            resc_preds.set_index(idx, inplace=True)
+
         self.past_targs = resc_targs
+        self.past_preds = resc_preds
 
         return resc_targs, resc_preds
 
@@ -578,15 +640,24 @@ class nn_model:
         Predicts the future points one at a time in the self.test_pts section.
         test_pts must be at least the size of the mva used to normalize,
         otherwise future_targs comes back all na's
+
+        TODO: in the for loop, go through self.future points at a time,
+        and reform the predictions in batches.
         """
         fut_preds = None
         start = -(self.test_pts + self.history + self.future)
-        rs_start = -(self.test_pts + self.mva - 1)
+        if self.mva is None:
+            rs_start = -(self.test_pts - 1)
+            ft_start = -(self.test_pts)
+        else:
+            rs_start = -(self.test_pts + self.mva - 1)
+            ft_start = -(self.test_pts + self.mva)
+
         feats, targs = dp.create_feats_to_current(self.sc_df.iloc[start:],
                                                     history=self.history,
                                                     future=self.future)
         targ_df = pd.DataFrame({'close': targs.flatten()})
-        future_targs = dp.reform_data(self.rs[-(self.test_pts + self.mva):],
+        future_targs = dp.reform_data(self.rs[ft_start:],
                                     targ_df,
                                     self.scalers,
                                     mva=self.mva)
@@ -602,18 +673,39 @@ class nn_model:
                 fut_preds = fut_preds.append(fut_df)
 
         resc_preds = dp.rescale_data(fut_preds, self.scalers)
-        # this method has the problem that small trends incur
-        # positive feedback, sending the predictions wildly off-target.
-        # ref_future_pred = dp.reform_future_predictions(self.rs[rs_start:-self.test_pts],
-        #                                                resc_preds.close.values,
-        #                                                mva=self.mva)
+        if self.mva is not None:
+            # this method has the problem that small trends incur
+            # positive feedback, sending the predictions wildly off-target.
+            # don't recommend this for more than self.future points
+            # ref_future_pred = dp.reform_future_predictions(self.rs[rs_start:-self.test_pts],
+            #                                                resc_preds.close.values,
+            #                                                mva=self.mva)
 
-        ref_future_pred = dp.reform_future_predictions_mild(self.rs[rs_start:-self.test_pts],
-                                                       resc_preds.close.values,
-                                                       mva=self.mva)
+            # this method seems to just flatline the predictions...
+            # ref_future_pred = dp.reform_future_predictions_mild(self.rs[rs_start:-self.test_pts],
+            #                                                resc_preds.close.values,
+            #                                                mva=self.mva)
+
+            # the best way is to go through point by point, and use the reform_future_predictions
+            # method to reform it up to self.future
+            ref_future_pred = dp.reform_future_predictions(self.rs[rs_start:-self.test_pts],
+                                                           resc_preds.close.values[:self.future],
+                                                           mva=self.mva)
+
+            for i in range(self.future, resc_preds.shape[0]):
+                st = rs_start + i - self.future
+                en = -self.test_pts + i - self.future
+                temp_ref_future_pred = dp.reform_future_predictions(self.rs[st:en],
+                                                                   resc_preds.close.values[i - self.future + 1:i + 1],
+                                                                   mva=self.mva)
+                ref_future_pred = ref_future_pred.append(temp_ref_future_pred.iloc[-1])
+        else:
+            ref_future_pred = resc_preds
+
 
         future_idx = self.sc_df.index[-ref_future_pred.shape[0]:]
         ref_future_pred.set_index(future_idx, inplace=True)
+        future_targs.set_index(future_idx, inplace=True)
 
         self.future_targs = future_targs
         self.future_preds = ref_future_pred
@@ -633,7 +725,9 @@ class nn_model:
                go.Scatter(x=self.past_preds.index, y=self.past_preds.close, name='predictions'),
                go.Scatter(x=self.future_targs.index, y=self.future_targs.close, name='actual future'),
                go.Scatter(x=self.future_preds.index, y=self.future_preds.close, name='future predictions')]
-        iplot(data) if nb else plot(data)
+        layout = go.Layout(title=self.market)
+        fig = go.Figure(data=data, layout=layout)
+        iplot(fig) if nb else plot(fig)
 
 
     def score_preds(self, get_preds=False):
@@ -674,7 +768,10 @@ class nn_model:
             start = self.sc_df.shape[0] - self.train_pts * i
             end = self.sc_df.shape[0] - self.train_pts * (i - 1)
             print(start, end)
-            self.feats, self.targs = dp.create_hist_feats(self.sc_df.iloc[start:end],
+            # need to double check this is working properly
+            self.sc_df, self.scalers = dp.transform_data(self.rs[start:end],
+                                                        mva=self.mva)
+            self.feats, self.targs = dp.create_hist_feats(self.sc_df,
                                                         history=self.history,
                                                         future=self.future)
             self.train_feats = self.feats[:-self.test_pts]
@@ -701,12 +798,66 @@ if __name__=="__main__":
 
     The simple 3layer FC model seems to perform really well on 30k training points,
     although it trains kind of slow.  The future predictions are excellent.
+
+    9-23-2017
+    on 9k training points without mva normalization
+    need a smaller learning rate, like 0.0001, especially for larger nets.
+    3 and 8-layer nets won't even work withouth low lr.
+    lr of 0.0001 and 100 epochs works for simple and 3-layer,
+
+    the 8-layer just appears to be unstable no matter what...probably
+    need to play with dropout and other optimizer hyperparameters
     """
-    # simple_nn_model_prototype()
-    nn = nn_model()
+
+    # this is for testing without a mva normalization
+    models = ['simple_fc',
+              'simple_3layer_fc',
+              'simple_8layer_fc']
+    # nn = nn_model(model=models[1])
+    # #nn.step_thru_and_score()
+    # nn.create_data()
+    # nn.set_hyperparameters(epochs=200, lr=0.00005)
+    # nn.create_graph()
+    # nn.train_net()
+    # nn.plot_future_preds()
+
+    # this one works decently well
+
+    # nn = nn_model(model=models[2], mva=30)
+    # #nn.step_thru_and_score()
+    # nn.create_data()
+    # nn.set_hyperparameters(epochs=100, lr=0.0002)
+    # nn.create_graph()
+    # nn.train_net()
+    # nn.plot_future_preds()
+
+
+    # captures current spike up at 11 on sept 19 2017 in test data
+    # hmm, missing the huge spike in predictions...
+    # nn = nn_model(model=models[2], mva=30, train_pts=50000, test_pts=6500)
+    # #nn.step_thru_and_score()
+    # nn.create_data()
+    # nn.set_hyperparameters(epochs=100, lr=0.0002)
+    # nn.create_graph()
+    # nn.train_net()
+    # nn.plot_future_preds()
+
+    # works ok but misses moves a lot
+    # nn = nn_model(model=models[2], mva=30, train_pts=20000, test_pts=6500)
+    # #nn.step_thru_and_score()
+    # nn.create_data()
+    # nn.set_hyperparameters(epochs=30, lr=0.0002)
+    # nn.create_graph()
+    # nn.train_net()
+    # nn.plot_future_preds()
+
+    # noticed a big move took 15 hours (900 mins) to complete
+    # even the 8-layer dense model doesn't work well. Going to have to go LSTM
+    # and add in number of buys/sells per trading block 
+    nn = nn_model(model=models[2], mva=30, train_pts=40000, test_pts=6500, future=900)
     #nn.step_thru_and_score()
     nn.create_data()
+    nn.set_hyperparameters(epochs=100, lr=0.0002)
     nn.create_graph()
-    nn.set_hyperparameters()
     nn.train_net()
     nn.plot_future_preds()
