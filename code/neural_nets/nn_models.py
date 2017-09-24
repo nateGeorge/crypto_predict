@@ -14,12 +14,17 @@ import tensorflow as tf
 import pandas as pd
 import numpy as np
 
+# keras
+from keras.models import Sequential
+from keras.layers import LSTM, Dense, Dropout, Activation
+
 # plotting
 import plotly
 from plotly.offline import download_plotlyjs, init_notebook_mode, plot, iplot
 from plotly.graph_objs import Scatter, Figure, Layout, Candlestick
 from plotly.tools import FigureFactory as FF
 import plotly.graph_objs as go
+import matplotlib.pyplot as plt
 
 
 def data_input(feats):
@@ -452,8 +457,24 @@ class nn_model:
         return out
 
 
-    def simple_lstm(self, x, keep_prob, lstm_size=300):
-        tf.contrib.rnn.BasicLSTMCell(lstm_size)
+    def simple_lstm_keras(self, keep_prob=0.8, lstm_size=300):
+        model = Sequential()
+
+        model.add(LSTM(
+            input_shape=(self.history, self.feats.shape[-1]),
+            units=300,
+            return_sequences=True))
+        model.add(Dropout(keep_prob))
+
+        model.add(LSTM(units=200, return_sequences=False))
+        model.add(Dropout(keep_prob))
+
+        model.add(Dense(units=1))
+        model.add(Activation("linear"))
+
+        model.compile(loss="mse", optimizer="adam")
+
+        self.model = model
 
 
     def set_hyperparameters(self, epochs=50, batch_size=32, keep_prob=0.5, lr=0.001):
@@ -812,7 +833,8 @@ if __name__=="__main__":
     # this is for testing without a mva normalization
     models = ['simple_fc',
               'simple_3layer_fc',
-              'simple_8layer_fc']
+              'simple_8layer_fc',
+              'simple_lstm']
     # nn = nn_model(model=models[1])
     # #nn.step_thru_and_score()
     # nn.create_data()
@@ -853,11 +875,40 @@ if __name__=="__main__":
 
     # noticed a big move took 15 hours (900 mins) to complete
     # even the 8-layer dense model doesn't work well. Going to have to go LSTM
-    # and add in number of buys/sells per trading block 
-    nn = nn_model(model=models[2], mva=30, train_pts=40000, test_pts=6500, future=900)
+    # and add in number of buys/sells per trading block
+    # nn = nn_model(model=models[2], mva=30, train_pts=40000, test_pts=6500, future=900)
+    # #nn.step_thru_and_score()
+    # nn.create_data()
+    # nn.set_hyperparameters(epochs=100, lr=0.0002)
+    # nn.create_graph()
+    # nn.train_net()
+    # nn.plot_future_preds()
+
+    # simple lstm model
+    # decent accuracy...looks like if it is up by some % (call it 5?) in the next
+    # timestep, suggest buy, the inverse, suggest sell and buy back in lower
+    nn = nn_model(model=models[3], mva=None, train_pts=10000, test_pts=1000, future=180)
     #nn.step_thru_and_score()
     nn.create_data()
-    nn.set_hyperparameters(epochs=100, lr=0.0002)
-    nn.create_graph()
-    nn.train_net()
-    nn.plot_future_preds()
+    nn.simple_lstm_keras() # creates keras lstm model
+    nn.model.fit(nn.train_feats,
+                nn.train_targs,
+                batch_size=128,
+                epochs=10,
+                validation_split=0.05)
+    preds = nn.model.predict(nn.feats).flatten()
+    plt.plot(preds, label='predictions')
+    plt.plot(nn.targs.flatten(), label='actual')
+    plt.legend()
+    plt.show()
+
+    idx = nn.rs.index[-nn.targs.shape[0]:]
+    data = [go.Scatter(x=idx, y=nn.targs.flatten(), name='actual'),
+           go.Scatter(x=idx, y=preds, name='predictions')]
+    layout = go.Layout(title=nn.market)
+    fig = go.Figure(data=data, layout=layout)
+    plot(fig)
+    # nn.set_hyperparameters(epochs=20, lr=0.001)
+    # nn.create_graph()
+    # nn.train_net()
+    # nn.plot_future_preds()
