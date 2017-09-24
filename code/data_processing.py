@@ -3,17 +3,37 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler as SS
 
 
-def resample_ohlc(df, resamp='T'):
+def resample_ohlc(df, resamp='T', vol_col='total'):
     """
-    :param df: pandas dataframe with 'amount', 'rate', and 'volume' in columns
-    :param resamp: the time period to resample to; 'T' (default) is minutely
+    Currently it's resampling the btc amount (or first trading pair)
+    as the volume.
+
+    To use the second trading pair as the volume, change 'total' to
+    'amount'.
+
     Other resampling times:
     http://pandas.pydata.org/pandas-docs/stable/timeseries.html#offset-aliases
+
+    :param df: pandas dataframe with 'amount', 'rate', and 'volume' in columns
+    :param resamp: the time period to resample to; 'T' (default) is minutely
+    :param vol_col: either 'total' or 'amount'.  'total' will use the
+                    second currency (usually BTC) as the volume
+                    calculator, 'amount' will use the first currency
+                    in the pair
+
+    :returns: pandas dataframe of resampled data with volume and
+              directional volume
     """
-    rs = df['rate'].resample('T').ohlc().interpolate()
-    rs_vol = pd.DataFrame(df['amount'].resample(resamp).sum().interpolate())
-    rs_vol.rename(columns={'amount':'volume'}, inplace=True)
+    rs = df['rate'].resample(resamp).ohlc().interpolate()
+    # calculate directional volume
+    df['dir_mult'] = 1
+    df.loc[df['type'] == 'sell', 'dir_mult'] = -1
+    df['direction_volume'] = df['dir_mult'] * df[vol_col]
+    rs_dir_amt = pd.DataFrame(df['direction_volume'].resample(resamp).sum().interpolate())
+    rs_vol = pd.DataFrame(df[vol_col].resample(resamp).sum().interpolate())
+    rs_vol.rename(columns={vol_col: 'volume'}, inplace=True)
     rs_full = rs.merge(rs_vol, left_index=True, right_index=True)
+    rs_full = rs_full.merge(rs_dir_amt, left_index=True, right_index=True)
     return rs_full
 
 
