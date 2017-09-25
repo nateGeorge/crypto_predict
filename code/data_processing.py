@@ -39,6 +39,9 @@ def resample_ohlc(df, resamp='T', vol_col='total'):
 
 def transform_data(df, mva=30):
     """
+    WARNING: have not tried with directional volume yet, guessing
+    that there will be problems.
+
     This is for scaling the original data for use in machine learning.
 
     Takes a numpy array as input, divides by a moving average with period mva (integer),
@@ -184,7 +187,7 @@ def create_hist_feats(df, history=300, future=5):
     resolution.  So we are using 300 minutes (6 hours) to predict 3 hours in
     the future.
     """
-    columns = ['open', 'high', 'low', 'close', 'volume']
+    columns = ['open', 'high', 'low', 'close', 'volume', 'direction_volume']
     target_col = 'close'
     data_points = df.shape[0]
     # create time-lagged features
@@ -206,7 +209,7 @@ def create_feats_to_current(df, history=300, future=5):
     Same as create_hist_feats, but creates features all the way to the most
     current timestep.
     """
-    columns = ['open', 'high', 'low', 'close', 'volume']
+    columns = ['open', 'high', 'low', 'close', 'volume', 'direction_volume']
     target_col = 'close'
     data_points = df.shape[0]
     # create time-lagged features
