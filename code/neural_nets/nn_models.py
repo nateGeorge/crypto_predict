@@ -395,7 +395,6 @@ class nn_model:
             f_batches.append(feats[start_idx:end_idx])
             t_batches.append(targs[start_idx:end_idx])
 
-        print(i)
         f_batches.append(feats[end_idx:])
         t_batches.append(targs[end_idx:])
         f_batches = np.array(f_batches)
@@ -422,7 +421,8 @@ class nn_model:
     def simple_fc(self, x, keep_prob):
         flat = tf.contrib.layers.flatten(x)
         fc1 = self.fully_conn(flat, 500)
-        drop1 = tf.nn.dropout(fc1, keep_prob)
+        bn_fc1 = tf.layers.batch_normalization(fc1)
+        drop1 = tf.nn.dropout(bn_fc1, keep_prob)
         out = tf.layers.dense(drop1, 1)  # need a linear activation on the output to work
         return out
 
@@ -430,11 +430,14 @@ class nn_model:
     def simple_3layer_fc(self, x, keep_prob):
         flat = tf.contrib.layers.flatten(x)
         fc1 = self.fully_conn(flat, 500)
-        drop1 = tf.nn.dropout(fc1, keep_prob)
+        bn_fc1 = tf.layers.batch_normalization(fc1)
+        drop1 = tf.nn.dropout(bn_fc1, keep_prob)
         fc2 = self.fully_conn(drop1, 800)
-        drop2 = tf.nn.dropout(fc2, keep_prob)
+        bn_fc2 = tf.layers.batch_normalization(fc2)
+        drop2 = tf.nn.dropout(bn_fc2, keep_prob)
         fc3 = self.fully_conn(drop2, 300)
-        drop3 = tf.nn.dropout(fc3, keep_prob)
+        bn_fc3 = tf.layers.batch_normalization(fc3)
+        drop3 = tf.nn.dropout(bn_fc3, keep_prob)
         out = tf.layers.dense(drop3, 1)  # need a linear activation on the output to work
         return out
 
@@ -442,19 +445,87 @@ class nn_model:
     def simple_8layer_fc(self, x, keep_prob):
         flat = tf.contrib.layers.flatten(x)
         fc1 = self.fully_conn(flat, 300)
-        drop1 = tf.nn.dropout(fc1, keep_prob)
+        bn_fc1 = tf.layers.batch_normalization(fc1)
+        drop1 = tf.nn.dropout(bn_fc1, keep_prob)
         fc2 = self.fully_conn(drop1, 400)
-        fc3 = self.fully_conn(fc2, 500)
-        drop3 = tf.nn.dropout(fc3, keep_prob)
+        bn_fc2 = tf.layers.batch_normalization(fc2)
+        fc3 = self.fully_conn(bn_fc2, 500)
+        bn_fc3 = tf.layers.batch_normalization(fc3)
+        drop3 = tf.nn.dropout(bn_fc3, keep_prob)
         fc4 = self.fully_conn(drop3, 500)
-        fc5 = self.fully_conn(fc4, 400)
-        drop5 = tf.nn.dropout(fc5, keep_prob)
+        bn_fc4 = tf.layers.batch_normalization(fc4)
+        fc5 = self.fully_conn(bn_fc4, 400)
+        bn_fc5 = tf.layers.batch_normalization(fc5)
+        drop5 = tf.nn.dropout(bn_fc5, keep_prob)
         fc6 = self.fully_conn(drop5, 300)
-        fc7 = self.fully_conn(fc6, 200)
-        drop7 = tf.nn.dropout(fc7, keep_prob)
+        bn_fc6 = tf.layers.batch_normalization(fc6)
+        fc7 = self.fully_conn(bn_fc6, 200)
+        bn_fc7 = tf.layers.batch_normalization(fc7)
+        drop7 = tf.nn.dropout(bn_fc7, keep_prob)
         fc8 = self.fully_conn(drop7, 100)
-        out = tf.layers.dense(fc8, 1)  # need a linear activation on the output to work
+        bn_fc8 = tf.layers.batch_normalization(fc8)
+        out = tf.layers.dense(bn_fc8, 1)  # need a linear activation on the output to work
         return out
+
+
+    def conv1d_3layer(self, x, keep_prob):
+        conv1 = tf.layers.conv1d(x,
+                                 filters=16,
+                                 kernel_size=5,
+                                 strides=1,
+                                 padding='valid',
+                                 kernel_initializer=tf.contrib.layers.xavier_initializer(uniform=False)
+                                 )
+        max_p1 = tf.layers.max_pooling1d(conv1,
+                                         pool_size=2,
+                                         strides=2)
+        act1 = tf.nn.elu(max_p1)
+        # should be along feature axis, which is the 2nd (or second to last)
+        # axis ([batchsize, hist_feats, channels])
+        bn1 = tf.layers.batch_normalization(act1, axis=-2)
+        conv2 = tf.layers.conv1d(bn1,
+                                 filters=32,
+                                 kernel_size=5,
+                                 strides=1,
+                                 padding='valid',
+                                 kernel_initializer=tf.contrib.layers.xavier_initializer(uniform=False)
+                                 )
+        max_p2 = tf.layers.max_pooling1d(conv2,
+                                         pool_size=2,
+                                         strides=2)
+        act2 = tf.nn.elu(max_p2)
+        bn2 = tf.layers.batch_normalization(act2, axis=-2)
+        conv3 = tf.layers.conv1d(bn2,
+                                 filters=64,
+                                 kernel_size=5,
+                                 strides=1,
+                                 padding='valid',
+                                 kernel_initializer=tf.contrib.layers.xavier_initializer(uniform=False)
+                                 )
+        max_p3 = tf.layers.max_pooling1d(conv3,
+                                         pool_size=2,
+                                         strides=2)
+        act3 = tf.nn.elu(max_p3)
+        bn3 = tf.layers.batch_normalization(act3, axis=-2)
+
+        # 3 fully-connected layers
+        flat = tf.contrib.layers.flatten(bn3)
+        fc1 = self.fully_conn(flat, 500)
+        # default axis=-1 is fine here
+        bn_fc1 = tf.layers.batch_normalization(fc1)
+        drop1 = tf.nn.dropout(bn_fc1, keep_prob)
+        fc2 = self.fully_conn(drop1, 200)
+        bn_fc2 = tf.layers.batch_normalization(fc2)
+        drop2 = tf.nn.dropout(bn_fc2, keep_prob)
+        fc3 = self.fully_conn(drop2, 50)
+        bn_fc3 = tf.layers.batch_normalization(fc3)
+        drop3 = tf.nn.dropout(bn_fc3, keep_prob)
+        out = tf.layers.dense(drop3, 1)  # need a linear activation on the output to work
+        return out
+
+
+    def simple_lstm(self, x):
+        pass
 
 
     def simple_lstm_keras(self, keep_prob=0.8, lstm_size=300):
@@ -501,6 +572,7 @@ class nn_model:
 
         # Model
         # self.pred = simple_net(x, keep_prob)  # old way of doing it
+        print('using', self.model, 'model')
         self.pred = getattr(self, self.model)(self.x, self.keep_prob)
 
         # Name predictions Tensor, so that is can be loaded from disk after training
@@ -514,7 +586,7 @@ class nn_model:
         # can also minimize loss, but that number is typically way smaller than
         # mse because it's averaged
 
-        self.optimizer = tf.train.AdamOptimizer(learning_rate=self.lr).minimize(self.loss)
+        self.optimizer = tf.train.AdamOptimizer(learning_rate=self.lr, epsilon=1e-4).minimize(self.loss)
 
         self.save_model_path = './' + self.model
         self.sess = tf.Session()
@@ -528,7 +600,7 @@ class nn_model:
         f_batches, t_batches = self.make_batches(self.train_feats,
                                                 self.train_targs,
                                                 self.batch_size)
-        # Training cycle
+
         for epoch in range(self.epochs):
             # Loop over all batches
             for feature_batch, label_batch in zip(f_batches, t_batches):
@@ -539,6 +611,7 @@ class nn_model:
                 self.sess.run(self.optimizer, feed_dict=fd)
 
             print('Epoch {:>2}:  '.format(epoch + 1), end='')
+            # show score on last batch
             fd = {self.x: feature_batch, self.y: label_batch, self.keep_prob: 1.}
             self.print_stats(self.sess, fd)
 
@@ -834,7 +907,8 @@ if __name__=="__main__":
     models = ['simple_fc',
               'simple_3layer_fc',
               'simple_8layer_fc',
-              'simple_lstm']
+              'simple_lstm_keras',
+              'conv1d_3layer']
     # nn = nn_model(model=models[1])
     # #nn.step_thru_and_score()
     # nn.create_data()
@@ -845,13 +919,13 @@ if __name__=="__main__":
 
     # this one works decently well
 
-    # nn = nn_model(model=models[2], mva=30)
-    # #nn.step_thru_and_score()
-    # nn.create_data()
-    # nn.set_hyperparameters(epochs=100, lr=0.0002)
-    # nn.create_graph()
-    # nn.train_net()
-    # nn.plot_future_preds()
+    nn = nn_model(model=models[2], mva=30)
+    #nn.step_thru_and_score()
+    nn.create_data()
+    nn.set_hyperparameters(epochs=100, lr=0.0002)
+    nn.create_graph()
+    nn.train_net()
+    nn.plot_future_preds()
 
 
     # captures current spike up at 11 on sept 19 2017 in test data
@@ -887,28 +961,85 @@ if __name__=="__main__":
     # simple lstm model
     # decent accuracy...looks like if it is up by some % (call it 5?) in the next
     # timestep, suggest buy, the inverse, suggest sell and buy back in lower
-    nn = nn_model(model=models[3], mva=None, train_pts=10000, test_pts=1000, future=180)
-    #nn.step_thru_and_score()
-    nn.create_data()
-    nn.simple_lstm_keras() # creates keras lstm model
-    nn.model.fit(nn.train_feats,
-                nn.train_targs,
-                batch_size=128,
-                epochs=10,
-                validation_split=0.05)
-    preds = nn.model.predict(nn.feats).flatten()
-    plt.plot(preds, label='predictions')
-    plt.plot(nn.targs.flatten(), label='actual')
-    plt.legend()
-    plt.show()
+    # loss of about 0.2143 on train...looks like it just guesses the average for many of the last points
+    # nn = nn_model(model=models[3], mva=None, train_pts=10000, test_pts=1000, future=180)
+    # #nn.step_thru_and_score()
+    # nn.create_data()
+    # nn.simple_lstm_keras() # creates keras lstm model
+    # nn.model.fit(nn.train_feats,
+    #             nn.train_targs,
+    #             batch_size=128,
+    #             epochs=10,
+    #             validation_split=0.05)
+    # preds = nn.model.predict(nn.feats).flatten()
+    # plt.plot(preds, label='predictions')
+    # plt.plot(nn.targs.flatten(), label='actual')
+    # plt.legend()
+    # plt.show()
+    #
+    # idx = nn.rs.index[-nn.targs.shape[0]:]
+    # data = [go.Scatter(x=idx, y=nn.targs.flatten(), name='actual'),
+    #        go.Scatter(x=idx, y=preds, name='predictions')]
+    # layout = go.Layout(title=nn.market)
+    # fig = go.Figure(data=data, layout=layout)
+    # plot(fig)
 
-    idx = nn.rs.index[-nn.targs.shape[0]:]
-    data = [go.Scatter(x=idx, y=nn.targs.flatten(), name='actual'),
-           go.Scatter(x=idx, y=preds, name='predictions')]
-    layout = go.Layout(title=nn.market)
-    fig = go.Figure(data=data, layout=layout)
-    plot(fig)
-    # nn.set_hyperparameters(epochs=20, lr=0.001)
+
+    # first conv1d attempt...
+    # decent results
+    # nn = nn_model(model=models[4],
+    #               mva=None,
+    #               train_pts=10000,
+    #               test_pts=1000,
+    #               history=300,
+    #               future=180)
+    # #nn.step_thru_and_score()
+    # nn.create_data()
+    # nn.set_hyperparameters(epochs=100, lr=0.00001)
     # nn.create_graph()
     # nn.train_net()
     # nn.plot_future_preds()
+
+    # try to predict 24h in the future.
+    # guessing we want more history than future points
+    # looks pretty terrible so far
+    # nn = nn_model(model=models[4],
+    #               mva=None,
+    #               train_pts=40000,
+    #               test_pts=6500,
+    #               history=3000,
+    #               future=1440)
+    # #nn.step_thru_and_score()
+    # nn.create_data()
+    # nn.set_hyperparameters(epochs=100, lr=0.00001)
+    # nn.create_graph()
+    # nn.train_net()
+    # # memory error on prediction of past points
+    # nn.plot_future_preds()
+    #
+    # data = [go.Scatter(x=nn.future_targs.index, y=nn.future_targs.close, name='actual future'),
+    #        go.Scatter(x=nn.future_preds.index, y=nn.future_preds.close, name='future predictions')]
+    # layout = go.Layout(title=nn.market)
+    # fig = go.Figure(data=data, layout=layout)
+    # plot(fig)
+
+
+    # not very good predictions
+    # nn = nn_model(model=models[4],
+    #               mva=None,
+    #               train_pts=40000,
+    #               test_pts=6500,
+    #               history=2000,
+    #               future=900)
+    # #nn.step_thru_and_score()
+    # nn.create_data()
+    # nn.set_hyperparameters(epochs=50, lr=0.0001)
+    # nn.create_graph()
+    # nn.train_net()
+    # # again, memory error...going to have to deal with this sooner or later
+    # nn.plot_future_preds()
+    # data = [go.Scatter(x=nn.future_targs.index, y=nn.future_targs.close, name='actual future'),
+    #        go.Scatter(x=nn.future_preds.index, y=nn.future_preds.close, name='future predictions')]
+    # layout = go.Layout(title=nn.market)
+    # fig = go.Figure(data=data, layout=layout)
+    # plot(fig)
