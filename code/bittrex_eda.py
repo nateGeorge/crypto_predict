@@ -12,10 +12,18 @@ HOME_DIR = btt.get_home_dir()
 MARKETS = btt.get_all_currency_pairs()
 
 
-def read_order_book(market):
+def read_order_book_old(market):
+    file_dir = '/media/nate/data_lake/crytpo_predict/data/order_books/'
     fileend = re.sub('-', '_', market + '.csv.gz')
-    buy_df = pd.read_csv(HOME_DIR + 'data/order_books/buy_orders_' + fileend, index_col='timestamp')
-    sell_df = pd.read_csv(HOME_DIR + 'data/order_books/sell_orders_' + fileend, index_col='timestamp')
+    buy_df = pd.read_csv(file_dir + 'buy_orders_' + fileend, index_col='timestamp')
+    sell_df = pd.read_csv(file_dir + 'sell_orders_' + fileend, index_col='timestamp')
+    return buy_df, sell_df
+
+
+def read_order_book(market, home_dir=HOME_DIR):
+    fileend = re.sub('-', '_', market + '.csv.gz')
+    buy_df = pd.read_csv(home_dir + 'data/order_books/buy_orders_' + fileend, index_col='timestamp')
+    sell_df = pd.read_csv(home_dir + 'data/order_books/sell_orders_' + fileend, index_col='timestamp')
     return buy_df, sell_df
 
 

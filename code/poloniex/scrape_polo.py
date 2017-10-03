@@ -14,7 +14,7 @@ import pandas as pd
 
 
 def get_home_dir(repo='crypto_predict'):
-    cwd = os.getcwd()
+    cwd = os.path.realpath(__file__)  # gets location of this file
     cwd_list = cwd.split('/')
     repo_position = [i for i, s in enumerate(cwd_list) if s == repo]
     if len(repo_position) > 1:
@@ -87,6 +87,7 @@ def save_orderbook(buy_df, sell_df, market):
     datapath = HOME_DIR + 'data/order_books/poloniex/'
     buy_file = datapath + 'buy_orders_' + market + '.csv.gz'
     sell_file = datapath + 'sell_orders_' + market + '.csv.gz'
+    print('saving', market)
     if os.path.exists(buy_file):
         buy_df.to_csv(buy_file, compression='gzip', mode='a', header=False)
         sell_df.to_csv(sell_file, compression='gzip', mode='a', header=False)
@@ -102,11 +103,10 @@ def save_all_order_books():
     save_orderbooks(buy_dfs, sell_dfs)
 
 
-def continuously_save_order_books(interval=60):
+def continuously_save_order_books(interval=600):
     """
     Saves all order books every 'interval' seconds.
     Poloniex allows 6 calls/second before your IP is banned.
-    At one scrape every 60 seconds, this is going to get huge very fast.
     """
     def keep_saving():
         while True:

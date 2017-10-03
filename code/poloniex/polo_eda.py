@@ -38,5 +38,5 @@ def read_trade_hist(market='BTC_AMP', drop=0):
 
 def get_all_trade_pairs():
     datapath = HOME_DIR + 'data/trade_history/poloniex/'
-    pairs = [f.split('/')[-1][14:-7] for f in iglob(datapath + '*.csv.gz')]
+    pairs = [f.split('/')[-1].split('.')[0] for f in iglob(datapath + '*.csv.gz')]
     return pairs

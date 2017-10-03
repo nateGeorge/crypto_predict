@@ -34,6 +34,7 @@ def resample_ohlc(df, resamp='T', vol_col='total'):
     rs_vol.rename(columns={vol_col: 'volume'}, inplace=True)
     rs_full = rs.merge(rs_vol, left_index=True, right_index=True)
     rs_full = rs_full.merge(rs_dir_amt, left_index=True, right_index=True)
+    rs_full['typical_price'] = rs_full[['high', 'low', 'close']].mean(axis=1)
     return rs_full
 
 
@@ -117,7 +118,7 @@ def inv_xform_prediction(prediction, scalers):
     :param prediction: the closing price prediction, which has been scaled
     :param scalers: dict of standardscalers used to scale known data
     """
-    return scalers['close'].inverse_transform(prediction.reshape(-1, 1))[0][0]
+    return scalers['typical_price'].inverse_transform(prediction.reshape(-1, 1))[0][0]
 
 
 def reform_prediction(df, prediction, mva=30):
@@ -129,7 +130,7 @@ def reform_prediction(df, prediction, mva=30):
                 not scaled or normalized
     :param prediction: rescaled
     """
-    return df.iloc[-mva + 1:].close.sum() / (mva / prediction - 1)
+    return df.iloc[-mva + 1:].typical_price.sum() / (mva / prediction - 1)
 
 
 def reform_future_predictions(df, preds, mva=30):
@@ -141,16 +142,16 @@ def reform_future_predictions(df, preds, mva=30):
     """
     resc_preds = [reform_prediction(df, preds[0], mva=mva)]
     # optional: set the first point to the last known point
-    # resc_preds = [df.close[-mva]]
+    # resc_preds = [df.typical_price[-mva]]
     for i in range(1, mva - 1):
-        cur = (df.iloc[-mva + i + 1:].close.sum() + sum(resc_preds)) / (mva / preds[i] - 1)
+        cur = (df.iloc[-mva + i + 1:].typical_price.sum() + sum(resc_preds)) / (mva / preds[i] - 1)
         resc_preds.append(cur)
 
     for i in range(mva - 1, preds.shape[0]):
         cur = sum(resc_preds[-mva + i + 1:i]) / (mva / preds[i] - 1)
         resc_preds.append(cur)
 
-    return pd.DataFrame({'close': resc_preds})
+    return pd.DataFrame({'typical_price': resc_preds})
 
 
 def reform_future_predictions_mild(df, preds, mva=30):
@@ -165,12 +166,12 @@ def reform_future_predictions_mild(df, preds, mva=30):
     """
     resc_preds = [reform_prediction(df, preds[0], mva=mva)]
     # optional: set the first point to the last known point
-    # resc_preds = [df.close[-mva]]
+    # resc_preds = [df.typical_price[-mva]]
     for i in range(1, preds.shape[0]):
-        cur = (df.iloc[-mva + 2:].close.sum() + resc_preds[0]) / (mva / preds[i] - 1)
+        cur = (df.iloc[-mva + 2:].typical_price.sum() + resc_preds[0]) / (mva / preds[i] - 1)
         resc_preds.append(cur)
 
-    return pd.DataFrame({'close': resc_preds})
+    return pd.DataFrame({'typical_price': resc_preds})
 
 
 def create_hist_feats(df, history=300, future=5):
@@ -187,8 +188,8 @@ def create_hist_feats(df, history=300, future=5):
     resolution.  So we are using 300 minutes (6 hours) to predict 3 hours in
     the future.
     """
-    columns = ['open', 'high', 'low', 'close', 'volume', 'direction_volume']
-    target_col = 'close'
+    columns = ['typical_price', 'open', 'high', 'low', 'close', 'volume', 'direction_volume']
+    target_col = 'typical_price'
     data_points = df.shape[0]
     # create time-lagged features
     features = []
@@ -209,8 +210,8 @@ def create_feats_to_current(df, history=300, future=5):
     Same as create_hist_feats, but creates features all the way to the most
     current timestep.
     """
-    columns = ['open', 'high', 'low', 'close', 'volume', 'direction_volume']
-    target_col = 'close'
+    columns = ['typical_price', 'open', 'high', 'low', 'close', 'volume', 'direction_volume']
+    target_col = 'typical_price'
     data_points = df.shape[0]
     # create time-lagged features
     features = []

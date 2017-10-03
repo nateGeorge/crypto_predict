@@ -1,3 +1,8 @@
+# TODO: calculate typical price (avg of close, open, high, low) and use that as
+# target and prediction
+
+# normalize each chunk with standardscaler? think about it
+
 # core
 import sys
 import time
@@ -299,6 +304,7 @@ class nn_model:
                 mva=None,
                 train_pts=10000,
                 test_pts=1000,
+                resamp='T',
                 model='simple_8layer_fc'):
         self.market = market
         self.future = future
@@ -308,6 +314,7 @@ class nn_model:
         self.mva = mva
         self.train_pts = train_pts
         self.test_pts = test_pts
+        self.resamp = resamp
         self.model = model
         self.future_targs = None
         self.future_preds = None
@@ -323,7 +330,15 @@ class nn_model:
             self.market = market
 
         self.df = pe.read_trade_hist(self.market)
-        self.rs = dp.resample_ohlc(self.df)
+        self.rs = dp.resample_ohlc(self.df, resamp=self.resamp)
+        if self.rs.shape[0] < self.train_pts:
+            print('WARNING! Only', str(self.rs.shape[0]), 'total points.')
+            print('This is less than the', str(self.train_pts), 'training points.')
+            train_pts = self.rs.shape[0] - self.test_pts
+            # TODO: calculate test_pts % and rescale
+            print('Setting train_pts to', str(train_pts))
+            self.train_pts = train_pts
+
         self.sc_df, self.scalers = dp.transform_data(self.rs.iloc[-self.train_pts:],
                                                     mva=self.mva)
         self.feats, self.targs = dp.create_hist_feats(self.sc_df,
@@ -331,6 +346,8 @@ class nn_model:
                                                     future=self.future)
         self.train_feats = self.feats[:-self.test_pts]
         self.train_targs = self.targs[:-self.test_pts]
+        self.test_feats = self.feats[-self.test_pts:]
+        self.test_targs = self.targs[-self.test_pts:]
 
 
     def data_input(self, feats):
@@ -403,7 +420,7 @@ class nn_model:
         return f_batches, t_batches
 
 
-    def print_stats(self, session, feed_dict):
+    def print_stats(self, session, feed_dict1, feed_dict2):
         """
         Print information about loss and validation accuracy
         : session: Current TensorFlow session
@@ -412,10 +429,11 @@ class nn_model:
         : cost: TensorFlow cost function
         : accuracy: TensorFlow accuracy function
         """
-        loss = session.run(self.loss, feed_dict=feed_dict)
-        # val_loss = session.run(accuracy, feed_dict={x: valid_features, y: valid_labels, keep_prob: 1.})
+        tr_loss = session.run(self.loss, feed_dict=feed_dict1)
+        te_loss = session.run(self.loss, feed_dict=feed_dict2)
 
-        print('loss = {0}'.format(loss))
+        print('train loss = {0}'.format(tr_loss))
+        print('test loss = {0}'.format(te_loss))
 
 
     def simple_fc(self, x, keep_prob):
@@ -428,6 +446,21 @@ class nn_model:
 
 
     def simple_3layer_fc(self, x, keep_prob):
+        flat = tf.contrib.layers.flatten(x)
+        fc1 = self.fully_conn(flat, 500)
+        drop1 = tf.nn.dropout(fc1, keep_prob)
+        fc2 = self.fully_conn(drop1, 800)
+        drop2 = tf.nn.dropout(fc2, keep_prob)
+        fc3 = self.fully_conn(drop2, 300)
+        drop3 = tf.nn.dropout(fc3, keep_prob)
+        out = tf.layers.dense(drop3, 1)  # need a linear activation on the output to work
+        return out
+
+
+    def simple_3layer_fc_bn(self, x, keep_prob):
+        """
+        same as simple_3layer_fc, but with batch norm
+        """
         flat = tf.contrib.layers.flatten(x)
         fc1 = self.fully_conn(flat, 500)
         bn_fc1 = tf.layers.batch_normalization(fc1)
@@ -443,6 +476,24 @@ class nn_model:
 
 
     def simple_8layer_fc(self, x, keep_prob):
+        flat = tf.contrib.layers.flatten(x)
+        fc1 = self.fully_conn(flat, 300)
+        drop1 = tf.nn.dropout(fc1, keep_prob)
+        fc2 = self.fully_conn(drop1, 400)
+        fc3 = self.fully_conn(fc2, 500)
+        drop3 = tf.nn.dropout(fc3, keep_prob)
+        fc4 = self.fully_conn(drop3, 500)
+        fc5 = self.fully_conn(fc4, 400)
+        drop5 = tf.nn.dropout(fc5, keep_prob)
+        fc6 = self.fully_conn(drop5, 300)
+        fc7 = self.fully_conn(fc6, 200)
+        drop7 = tf.nn.dropout(fc7, keep_prob)
+        fc8 = self.fully_conn(drop7, 100)
+        out = tf.layers.dense(fc8, 1)  # need a linear activation on the output to work
+        return out
+
+
+    def simple_8layer_fc_bn(self, x, keep_prob):
         flat = tf.contrib.layers.flatten(x)
         fc1 = self.fully_conn(flat, 300)
         bn_fc1 = tf.layers.batch_normalization(fc1)
@@ -524,6 +575,62 @@ class nn_model:
         return out
 
 
+    def conv1d_weird(self, x, keep_prob):
+        conv1 = tf.layers.conv1d(x,
+                                 filters=16,
+                                 kernel_size=5,
+                                 strides=1,
+                                 padding='valid',
+                                 kernel_initializer=tf.contrib.layers.xavier_initializer(uniform=False)
+                                 )
+        max_p1 = tf.layers.max_pooling1d(conv1,
+                                         pool_size=8,
+                                         strides=1)
+        act1 = tf.nn.elu(max_p1)
+        # should be along feature axis, which is the 2nd (or second to last)
+        # axis ([batchsize, hist_feats, channels])
+        bn1 = tf.layers.batch_normalization(act1, axis=-2)
+        conv2 = tf.layers.conv1d(bn1,
+                                 filters=24,
+                                 kernel_size=5,
+                                 strides=1,
+                                 padding='valid',
+                                 kernel_initializer=tf.contrib.layers.xavier_initializer(uniform=False)
+                                 )
+        max_p2 = tf.layers.max_pooling1d(conv2,
+                                         pool_size=8,
+                                         strides=1)
+        act2 = tf.nn.elu(max_p2)
+        bn2 = tf.layers.batch_normalization(act2, axis=-2)
+        conv3 = tf.layers.conv1d(bn2,
+                                 filters=36,
+                                 kernel_size=3,
+                                 strides=1,
+                                 padding='valid',
+                                 kernel_initializer=tf.contrib.layers.xavier_initializer(uniform=False)
+                                 )
+        max_p3 = tf.layers.max_pooling1d(conv3,
+                                         pool_size=2,
+                                         strides=2)
+        act3 = tf.nn.elu(max_p3)
+        bn3 = tf.layers.batch_normalization(act3, axis=-2)
+
+        # 3 fully-connected layers
+        flat = tf.contrib.layers.flatten(bn3)
+        fc1 = self.fully_conn(flat, 1000)
+        # default axis=-1 is fine here
+        bn_fc1 = tf.layers.batch_normalization(fc1)
+        drop1 = tf.nn.dropout(bn_fc1, keep_prob)
+        fc2 = self.fully_conn(drop1, 500)
+        bn_fc2 = tf.layers.batch_normalization(fc2)
+        drop2 = tf.nn.dropout(bn_fc2, keep_prob)
+        fc3 = self.fully_conn(drop2, 20)
+        bn_fc3 = tf.layers.batch_normalization(fc3)
+        drop3 = tf.nn.dropout(bn_fc3, keep_prob)
+        out = tf.layers.dense(drop3, 1)  # need a linear activation on the output to work
+        return out
+
+
     def simple_lstm(self, x):
         pass
 
@@ -548,7 +655,7 @@ class nn_model:
         self.model = model
 
 
-    def set_hyperparameters(self, epochs=50, batch_size=32, keep_prob=0.5, lr=0.001):
+    def set_hyperparameters(self, epochs=50, batch_size=32, keep_prob=0.5, lr=0.001, epsilon=1e-8):
         """
         must be called before create_graph()
         """
@@ -556,6 +663,7 @@ class nn_model:
         self.batch_size = batch_size
         self.keep_probability = keep_prob
         self.lr = lr
+        self.epsilon = epsilon
 
 
     def create_graph(self):
@@ -586,13 +694,26 @@ class nn_model:
         # can also minimize loss, but that number is typically way smaller than
         # mse because it's averaged
 
-        self.optimizer = tf.train.AdamOptimizer(learning_rate=self.lr, epsilon=1e-4).minimize(self.loss)
+        self.optimizer = tf.train.AdamOptimizer(learning_rate=self.lr,
+                                    epsilon=self.epsilon).minimize(self.loss)
 
         self.save_model_path = './' + self.model
         self.sess = tf.Session()
 
         # Initializing the variables
         self.sess.run(tf.global_variables_initializer())
+
+
+    def load_model(self):
+        # first reset to avoid any errors from any graphs currently loaded
+        tf.reset_default_graph()
+        sess = tf.Session()
+        self.sess = sess
+        #First let's load meta graph and restore weights
+        saver = tf.train.import_meta_graph('./' + self.model)
+        saver.restore(sess, tf.train.latest_checkpoint('./'))
+        graph = tf.get_default_graph()
+        self.pred = graph.get_tensor_by_name('predictions')
 
 
     def train_net(self):
@@ -611,9 +732,13 @@ class nn_model:
                 self.sess.run(self.optimizer, feed_dict=fd)
 
             print('Epoch {:>2}:  '.format(epoch + 1), end='')
-            # show score on last batch
-            fd = {self.x: feature_batch, self.y: label_batch, self.keep_prob: 1.}
-            self.print_stats(self.sess, fd)
+            fd = {self.x: self.train_feats,
+                    self.y: self.train_targs,
+                    self.keep_prob: 1.}
+            fd2 = {self.x: self.test_feats,
+                    self.y: self.test_targs,
+                    self.keep_prob: 1.}
+            self.print_stats(self.sess, fd, fd2)
 
         # Save Model
         saver = tf.train.Saver()
@@ -641,6 +766,12 @@ class nn_model:
 
     def get_past_preds(self, past=None):
         """
+        TODO:
+        * rename function to pred_past_points for consisntence
+        * if train_feats is too large (product of all train_feats dims)
+          get predictions in chunks and glue together
+        * fix the handling of 'past'
+
         past can be used to limit the amount of points plotted
         need to double-check the math with the 'past' indexing
         need to double-check the 'start' variable
@@ -901,14 +1032,21 @@ if __name__=="__main__":
 
     the 8-layer just appears to be unstable no matter what...probably
     need to play with dropout and other optimizer hyperparameters
+
+    seems like using too many poinst without LSTM is not good actually,
+    because the net may be using too old of points to predict future.
+    Probaly evidence that using LSTM would be really helpful.
     """
 
     # this is for testing without a mva normalization
-    models = ['simple_fc',
-              'simple_3layer_fc',
-              'simple_8layer_fc',
-              'simple_lstm_keras',
-              'conv1d_3layer']
+    models = ['simple_fc',              # 0
+              'simple_3layer_fc',       # 1
+              'simple_8layer_fc',       # 2
+              'simple_lstm_keras',      # 3
+              'conv1d_3layer',          # 4
+              'simple_3layer_fc_bn',    # 5
+              'simple_8layer_fc_bn',    # 6
+              'conv1d_weird']           # 7
     # nn = nn_model(model=models[1])
     # #nn.step_thru_and_score()
     # nn.create_data()
@@ -918,20 +1056,81 @@ if __name__=="__main__":
     # nn.plot_future_preds()
 
     # this one works decently well
+    # nn = nn_model(model=models[2],
+    #               train_pts=10000,
+    #               test_pts=1000,
+    #               future=180,
+    #               history=300,
+    #               mva=30)
+    # nn.create_data()
+    # nn.set_hyperparameters(epochs=100, lr=0.0002)
+    # nn.create_graph()
+    # nn.train_net()
+    # nn.plot_future_preds()
+    # # to see what it would be like to treat more points as the future, set this:
+    # # however, this is predicting on train data, so not good to use
+    # nn.test_pts = 7000
+    # _, _ = nn.pred_future_points()
+    # nn.plot_future_preds()
 
-    nn = nn_model(model=models[2], mva=30)
-    #nn.step_thru_and_score()
-    nn.create_data()
-    nn.set_hyperparameters(epochs=100, lr=0.0002)
-    nn.create_graph()
-    nn.train_net()
-    nn.plot_future_preds()
+    # try again with more training points and more test points
+    # this one is decent
+    # nn = nn_model(model=models[2],
+    #               train_pts=40000,
+    #               test_pts=10000,
+    #               future=180,
+    #               history=300,
+    #               mva=30)
+    # nn.create_data()
+    # nn.set_hyperparameters(epochs=100, lr=0.0002)
+    # nn.create_graph()
+    # nn.train_net()
+    # nn.plot_future_preds()
+
+
+    # the mva seems to be throwing it off...
+    # nn = nn_model(model=models[2],
+    #               train_pts=40000,
+    #               test_pts=7000,
+    #               future=360,
+    #               history=720,
+    #               mva=30)
+    # nn.create_data()
+    # nn.set_hyperparameters(epochs=100, lr=0.0002)
+    # nn.create_graph()
+    # nn.train_net()
+    # nn.plot_future_preds()
+
+
+    # this model just doesn't seem to work well...
+    # nn = nn_model(model=models[2],
+    #               train_pts=40000,
+    #               test_pts=7000,
+    #               future=360,
+    #               history=720,
+    #               mva=None)
+    # nn.create_data()
+    # nn.set_hyperparameters(epochs=100, lr=0.0002)
+    # nn.create_graph()
+    # nn.train_net()
+    # nn.plot_future_preds()
+    # # train more
+    # nn.set_hyperparameters(epochs=20, lr=0.0002)
+    # nn.train_net()
+    # _, _ = nn.pred_future_points()
+    # _, _ = nn.get_past_preds()
+    # nn.plot_future_preds()
+    # # train more
+    # nn.set_hyperparameters(epochs=50, lr=0.0002)
+    # nn.train_net()
+    # _, _ = nn.pred_future_points()
+    # _, _ = nn.get_past_preds()
+    # nn.plot_future_preds()
 
 
     # captures current spike up at 11 on sept 19 2017 in test data
     # hmm, missing the huge spike in predictions...
     # nn = nn_model(model=models[2], mva=30, train_pts=50000, test_pts=6500)
-    # #nn.step_thru_and_score()
     # nn.create_data()
     # nn.set_hyperparameters(epochs=100, lr=0.0002)
     # nn.create_graph()
@@ -940,7 +1139,6 @@ if __name__=="__main__":
 
     # works ok but misses moves a lot
     # nn = nn_model(model=models[2], mva=30, train_pts=20000, test_pts=6500)
-    # #nn.step_thru_and_score()
     # nn.create_data()
     # nn.set_hyperparameters(epochs=30, lr=0.0002)
     # nn.create_graph()
@@ -951,7 +1149,6 @@ if __name__=="__main__":
     # even the 8-layer dense model doesn't work well. Going to have to go LSTM
     # and add in number of buys/sells per trading block
     # nn = nn_model(model=models[2], mva=30, train_pts=40000, test_pts=6500, future=900)
-    # #nn.step_thru_and_score()
     # nn.create_data()
     # nn.set_hyperparameters(epochs=100, lr=0.0002)
     # nn.create_graph()
@@ -963,7 +1160,6 @@ if __name__=="__main__":
     # timestep, suggest buy, the inverse, suggest sell and buy back in lower
     # loss of about 0.2143 on train...looks like it just guesses the average for many of the last points
     # nn = nn_model(model=models[3], mva=None, train_pts=10000, test_pts=1000, future=180)
-    # #nn.step_thru_and_score()
     # nn.create_data()
     # nn.simple_lstm_keras() # creates keras lstm model
     # nn.model.fit(nn.train_feats,
@@ -993,7 +1189,6 @@ if __name__=="__main__":
     #               test_pts=1000,
     #               history=300,
     #               future=180)
-    # #nn.step_thru_and_score()
     # nn.create_data()
     # nn.set_hyperparameters(epochs=100, lr=0.00001)
     # nn.create_graph()
@@ -1009,7 +1204,6 @@ if __name__=="__main__":
     #               test_pts=6500,
     #               history=3000,
     #               future=1440)
-    # #nn.step_thru_and_score()
     # nn.create_data()
     # nn.set_hyperparameters(epochs=100, lr=0.00001)
     # nn.create_graph()
@@ -1031,7 +1225,6 @@ if __name__=="__main__":
     #               test_pts=6500,
     #               history=2000,
     #               future=900)
-    # #nn.step_thru_and_score()
     # nn.create_data()
     # nn.set_hyperparameters(epochs=50, lr=0.0001)
     # nn.create_graph()
@@ -1043,3 +1236,200 @@ if __name__=="__main__":
     # layout = go.Layout(title=nn.market)
     # fig = go.Figure(data=data, layout=layout)
     # plot(fig)
+
+    # 3-layer conv and dense, doesn't do great
+    # nn = nn_model(model=models[4],
+    #               mva=None,
+    #               train_pts=20000,
+    #               test_pts=6500,
+    #               history=700,
+    #               future=300)
+    # nn.create_data()
+    # nn.set_hyperparameters(epochs=100, lr=0.0001)
+    # nn.create_graph()
+    # nn.train_net()
+    # nn.plot_future_preds()
+    # # better after a second training
+    # nn.train_net()
+    # _, _ = nn.pred_future_points()
+    # _, _ = nn.get_past_preds()
+    # nn.plot_future_preds()
+    # # after a 3rd training, losses getting lower but future predictions aren't much different
+    # nn.train_net()
+    # _, _ = nn.pred_future_points()
+    # _, _ = nn.get_past_preds()
+    # nn.plot_future_preds()
+
+
+    # meh still not great
+    # nn = nn_model(model=models[4],
+    #               mva=None,
+    #               train_pts=30000,
+    #               test_pts=6500,
+    #               history=540,
+    #               future=180)
+    # nn.create_data()
+    # nn.set_hyperparameters(epochs=150, lr=0.0001)
+    # nn.create_graph()
+    # nn.train_net()
+    # nn.plot_future_preds()
+
+    # not good at all
+    # nn = nn_model(model=models[1],
+    #               mva=None,
+    #               train_pts=20000,
+    #               test_pts=7000,
+    #               history=300,
+    #               future=180)
+    # nn.create_data()
+    # nn.set_hyperparameters(epochs=50, lr=0.001)
+    # nn.create_graph()
+    # nn.train_net()
+    # nn.plot_future_preds()
+
+    # 8-layer with batchnorm
+    # nn = nn_model(model=models[6],
+    #               train_pts=12000,  # 500 days
+    #               test_pts=3000,
+    #               future=25,
+    #               history=150,
+    #               mva=None,
+    #               resamp='H')
+    # nn.create_data()
+    # nn.set_hyperparameters(epochs=100, lr=0.001)
+    # nn.create_graph()
+    # nn.train_net()
+    # nn.plot_future_preds()  # looks terrible
+    # nn.train_net()
+    # _, _ = nn.pred_future_points()
+    # _, _ = nn.get_past_preds()
+    # nn.plot_future_preds() # starting to look better
+    # nn.train_net()
+    # _, _ = nn.pred_future_points()
+    # _, _ = nn.get_past_preds()
+    # nn.plot_future_preds() # meh getting weird
+
+
+    # seems to trail by exactly the amount we're trying to predict
+    # nn = nn_model(model=models[6],
+    #               train_pts=12000,  # 500 days
+    #               test_pts=3000,
+    #               future=25,
+    #               history=150,
+    #               mva=20,  # cant remember if mva should be less than future
+    #               resamp='H')
+    # nn.create_data()
+    # nn.set_hyperparameters(epochs=100, lr=0.001)
+    # nn.create_graph()
+    # nn.train_net()
+    # nn.plot_future_preds()
+
+    # doesn't work great
+    # nn = nn_model(model=models[3],
+    #                 mva=None,
+    #                 train_pts=12000,
+    #                 test_pts=3000,
+    #                 future=72,  # 3 days in the future
+    #                 history=300, # give it 12.5 days of history
+    #                 resamp='H')
+    # nn.create_data()
+    # nn.simple_lstm_keras() # creates keras lstm model
+    # nn.model.fit(nn.train_feats,
+    #             nn.train_targs,
+    #             batch_size=128,
+    #             epochs=10,
+    #             validation_split=0.05)
+    # preds = nn.model.predict(nn.feats).flatten()
+    #
+    # idx = nn.rs.index[-nn.targs.shape[0]:]
+    # data = [go.Scatter(x=idx, y=nn.targs.flatten(), name='actual'),
+    #        go.Scatter(x=idx, y=preds, name='predictions')]
+    # layout = go.Layout(title=nn.market)
+    # fig = go.Figure(data=data, layout=layout)
+    # plot(fig)
+
+
+    # still not very good
+    # nn = nn_model(model=models[3],
+    #                 mva=None,
+    #                 train_pts=12000,
+    #                 test_pts=3000,
+    #                 future=72,  # 3 days in the future
+    #                 history=500, # about 3 weeks of history
+    #                 resamp='H')
+    # nn.create_data()
+    # nn.simple_lstm_keras() # creates keras lstm model
+    # nn.model.fit(nn.train_feats,
+    #             nn.train_targs,
+    #             batch_size=128,
+    #             epochs=10,
+    #             validation_split=0.05)
+    # preds = nn.model.predict(nn.feats).flatten()
+    # unsc_preds = dp.rescale_data(pd.DataFrame({'typical_price': preds}), nn.scalers)
+    #
+    # idx = nn.rs.index[-nn.targs.shape[0]:]
+    # data = [go.Scatter(x=idx, y=nn.targs.flatten(), name='actual'),
+    #        go.Scatter(x=idx, y=preds, name='predictions')]
+    # layout = go.Layout(title=nn.market)
+    # fig = go.Figure(data=data, layout=layout)
+    # plot(fig)
+    #
+    # rs = nn.rs.iloc[100:] # ignore first few points because they are garbage
+    # trace = Candlestick(x=rs.index,
+    #                     open=rs['open'],
+    #                     high=rs['high'],
+    #                     low=rs['low'],
+    #                     close=rs['close'])
+    # scatters = [go.Scatter(x=idx, y=unsc_preds.typical_price.values, name='predictions')]
+    # data = [trace] + scatters
+    # plot(data, filename='candlestick_and_predictions')
+
+    # first conv1d_weird attempt...
+    # seems like it would take a long time to train on this set
+    # nn = nn_model(model=models[7],
+    #               mva=None,
+    #               train_pts=40000,
+    #               test_pts=7000,
+    #               history=600, # 10 hours history
+    #               future=300)  # 5 hours
+    # nn.create_data()
+    # nn.set_hyperparameters(epochs=100, lr=0.001)
+    # nn.create_graph()
+    # nn.train_net()
+    # nn.plot_future_preds()
+    # nn.train_net()
+    # _, _ = nn.pred_future_points()
+    # _, _ = nn.get_past_preds()
+    # nn.plot_future_preds()
+
+    nn = nn_model(model=models[7],
+                  mva=None,
+                  train_pts=10000,
+                  test_pts=1000,
+                  history=300,
+                  future=180)
+    nn.create_data()
+    nn.set_hyperparameters(epochs=200, lr=0.001, epsilon=0.1)
+    nn.create_graph()
+    nn.train_net()
+    nn.plot_future_preds()
+    nn.train_net()
+    _, _ = nn.pred_future_points()
+    _, _ = nn.get_past_preds()
+    nn.plot_future_preds()
+    # seeing how well it xfers to other markets
+    nn.market = 'BTC_ETH'
+    nn.create_data()
+    _, _ = nn.pred_future_points()
+    _, _ = nn.get_past_preds()
+    nn.plot_future_preds()  # not great
+    # try retraining
+    nn.train_net()
+    _, _ = nn.pred_future_points()
+    _, _ = nn.get_past_preds()
+    nn.plot_future_preds()
+    nn.market = 'BTC_AMP'
+    nn.create_data()
+    _, _ = nn.pred_future_points()
+    _, _ = nn.get_past_preds()
+    nn.plot_future_preds()  # not great
