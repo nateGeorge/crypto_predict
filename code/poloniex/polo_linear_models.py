@@ -49,7 +49,7 @@ def make_linear_models_sklearn():
     for m in MARKETS:
         cut = 5000
         print('loading', m + '...')
-        df = pe.read_trade_hist(m)
+        df = load_data(m)
         # resamples to the hour
         rs_full = dp.resample_ohlc(df, resamp='H')
         if rs_full.shape[0] < 2000:
@@ -75,6 +75,20 @@ def make_linear_models_sklearn():
     return models, r2s
 
 
+def load_data(m):
+    notloaded = True
+    while notloaded:
+        try:
+            df = pe.read_trade_hist(m)
+            notloaded = False
+        except EOFError:  # this happens if the data is being written currently
+            #...give it a bit to finish scraping
+            print('EOF error, sleeping for a minute...')
+            time.sleep(60)
+
+    return df
+
+
 def make_linear_models():
     """
     creates linear models for each currency pair
@@ -86,7 +100,7 @@ def make_linear_models():
     for m in MARKETS:
         cut = 5000
         print('loading', m + '...')
-        df = pe.read_trade_hist(m)
+        df = load_data(m)
         # resamples to the hour
         rs_full = dp.resample_ohlc(df, resamp='H')
         if rs_full.shape[0] < 2000:
@@ -124,20 +138,15 @@ def get_future_preds(models, r2s):
     for m in trading_pairs:
         if r2s[m] >= 0.1:  # ignore the really poor models
             print('loading', m + '...')
-            try:
-                df = pe.read_trade_hist(m)
-            except EOFError:  # this happens if the data is being written currently
-                #...give it a bit to finish scraping
-                time.sleep(60)
-                df = pe.read_trade_hist(m)
+            df = load_data(m)
 
             # resamples to the hour
             rs_full = dp.resample_ohlc(df, resamp='H')
             rs_full = make_features(rs_full)
             last_price = rs_full.iloc[-1]['typical_price']
             cur_mva_diffs.append(rs_full.iloc[-1]['mva_tp_24_diff'])
-            X = rs_full[['mva_tp_24_diff',
-                        'direction_volume']].iloc[-hist:].values
+            X = sm.add_constant(rs_full[['mva_tp_24_diff',
+                        'direction_volume']].iloc[-hist:].values)   
             preds = models[m].predict(X)
             scaled_preds.append(preds[-1] / last_price)
             print('scaled prediction:', str(preds[-1] / last_price))
@@ -149,8 +158,8 @@ def get_future_preds(models, r2s):
 
     pred_idx = np.argsort(scaled_preds)[::-1]
     if scaled_preds[pred_idx][0] > 0:
-        print('top 3 buys right now:')
-        for i in pred_idx[:3]:
+        print('top 10 buys right now:')
+        for i in pred_idx[:10]:
             print(pred_pairs[i] + ',', 'up', '%.1f' % (scaled_preds[i] * 100) + '%')
     else:
         print('nothing trending up right now!')
@@ -184,8 +193,15 @@ def load_models_r2s():
     loads models and r-squared for all available markets
     """
     model_folder = HOME_DIR + 'models/poloniex/'
-    ms = pk.load(open(model_folder + 'models.pk', 'rb'))
-    r2s = pk.load(open(model_folder + 'r2s.pk', 'rb'))
+    model_file = model_folder + 'models.pk'
+    if os.path.exists(model_file):
+        ms = pk.load(open(model_file, 'rb'))
+        r2s = pk.load(open(model_folder + 'r2s.pk', 'rb'))
+    else:
+        make_and_save_models()
+        ms = pk.load(open(model_file, 'rb'))
+        r2s = pk.load(open(model_folder + 'r2s.pk', 'rb'))
+
     return ms, r2s
 
 
