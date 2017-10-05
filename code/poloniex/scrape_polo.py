@@ -117,7 +117,10 @@ def continuously_save_order_books(interval=600):
     thread.start()
 
 
-def get_trade_history(market='BTC_BCN'):
+def get_trade_history(market='BTC_BCN', two_h_delay=False):
+    """
+    :param two_h_delay: if a 2 hour delay should be enacted between scrapings
+    """
     # first check the latest date on data already there
     datafile = TRADE_DATA_DIR + market + '.csv.gz'
     latest_ts = None
@@ -140,7 +143,7 @@ def get_trade_history(market='BTC_BCN'):
         d = datetime.utcnow()
         epoch = datetime(1970, 1, 1)
         cur_ts = (d - epoch).total_seconds()
-        if (cur_ts - latest_ts) < 7200:
+        if (cur_ts - latest_ts) < 7200 and two_h_delay:
             print('scraped within last 2 hours, not scraping again...')
             return None, None
         else:

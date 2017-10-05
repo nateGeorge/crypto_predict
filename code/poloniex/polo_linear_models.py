@@ -146,7 +146,7 @@ def get_future_preds(models, r2s):
             last_price = rs_full.iloc[-1]['typical_price']
             cur_mva_diffs.append(rs_full.iloc[-1]['mva_tp_24_diff'])
             X = sm.add_constant(rs_full[['mva_tp_24_diff',
-                        'direction_volume']].iloc[-hist:].values)   
+                        'direction_volume']].iloc[-hist:].values)
             preds = models[m].predict(X)
             scaled_preds.append(preds[-1] / last_price)
             print('scaled prediction:', str(preds[-1] / last_price))
@@ -163,6 +163,16 @@ def get_future_preds(models, r2s):
             print(pred_pairs[i] + ',', 'up', '%.1f' % (scaled_preds[i] * 100) + '%')
     else:
         print('nothing trending up right now!')
+
+    pred_idx = np.argsort(scaled_preds)
+    if scaled_preds[pred_idx][0] < 0:
+        print('top 10 shorts right now:')
+        for i in pred_idx[:10]:
+            print(pred_pairs[i] + ',', 'down', '%.1f' % (scaled_preds[i] * 100) + '%')
+    else:
+        print('nothing trending down right now!')
+
+
 
     avg_trend = scaled_preds.mean()
     if avg_trend < 0:
