@@ -8,6 +8,7 @@ import polo_eda as pe
 sys.path.append('../')
 import data_processing as dp
 import utils
+import calc_TA_sigs as cts
 
 # installed
 import pandas as pd
@@ -18,24 +19,6 @@ from sklearn.linear_model import LinearRegression as lr
 
 MARKETS = pe.get_all_trade_pairs()
 HOME_DIR = utils.get_home_dir()
-
-
-def make_features(rs):
-    """
-    makes moving average features and price diff target for linear regression
-
-    :param rs: resampled dataframe
-    """
-    # 24-hour moving average of typical price
-    rs['mva_tp_24'] = rs['typical_price'].rolling(24).mean().bfill()
-    # calculate slope/derivative of 24h mva
-    rs['mva_tp_24_diff'] = rs['mva_tp_24'].diff().bfill()
-    # make target, the 24 hour price difference
-    rs['24h_price_diff'] = rs['typical_price'].copy()
-    rs['24h_price_diff'].iloc[24:] = rs['typical_price'].iloc[24:].copy().values - rs['typical_price'].iloc[:-24].copy().values
-    rs['24h_price_diff'].iloc[:24] = rs['24h_price_diff'].iloc[24].copy()
-
-    return rs
 
 
 def make_linear_models_sklearn():
@@ -58,7 +41,7 @@ def make_linear_models_sklearn():
         elif rs_full.shape[0] < 5000:
             cut = 2000
 
-        rs_full = make_features(rs_full)
+        rs_full = dp.make_mva_features(rs_full)
         # skip the first 'cut' points
         rs_full = rs_full.iloc[cut:]
 
@@ -109,12 +92,35 @@ def make_linear_models():
         elif rs_full.shape[0] < 5000:
             cut = 2000
 
-        rs_full = make_features(rs_full)
+        rs_full = dp.make_mva_features(rs_full)
+        rs_full = cts.create_tas(bars=rs_full, col='typical_price')
         # skip the first 'cut' points
         rs_full = rs_full.iloc[cut:]
 
-        X = X = sm.add_constant(rs_full[['mva_tp_24_diff',
-                                'direction_volume']].iloc[24 - hist:-hist].values)
+        x_cols = ['bband_u',
+                    'bband_m',
+                    'bband_l',
+                    'dema',
+                    'ema',
+                    'midp',
+                    'tema',
+                    'trima',
+                    'ad',
+                    'adosc',
+                    'obv',
+                    'trange',
+                    'mom',
+                    'apo',
+                    'bop',
+                    'cci',
+                    'macd',
+                    'macdsignal',
+                    'macdhist',
+                    'ppo',
+                    'willr',
+                    'mva_tp_24_diff',
+                    'direction_volume']
+        X = sm.add_constant(rs_full[x_cols].iloc[24 - hist:-hist].values)
         y = rs_full['24h_price_diff'].iloc[24:].values
         model = sm.OLS(y, X).fit()
         r2 = model.rsquared
@@ -142,11 +148,33 @@ def get_future_preds(models, r2s):
 
             # resamples to the hour
             rs_full = dp.resample_ohlc(df, resamp='H')
-            rs_full = make_features(rs_full)
+            rs_full = dp.make_mva_features(rs_full)
             last_price = rs_full.iloc[-1]['typical_price']
             cur_mva_diffs.append(rs_full.iloc[-1]['mva_tp_24_diff'])
-            X = sm.add_constant(rs_full[['mva_tp_24_diff',
-                        'direction_volume']].iloc[-hist:].values)
+            x_cols = ['bband_u',
+                        'bband_m',
+                        'bband_l',
+                        'dema',
+                        'ema',
+                        'midp',
+                        'tema',
+                        'trima',
+                        'ad',
+                        'adosc',
+                        'obv',
+                        'trange',
+                        'mom',
+                        'apo',
+                        'bop',
+                        'cci',
+                        'macd',
+                        'macdsignal',
+                        'macdhist',
+                        'ppo',
+                        'willr',
+                        'mva_tp_24_diff',
+                        'direction_volume']
+            X = sm.add_constant(rs_full[x_cols].iloc[-hist:].values)
             preds = models[m].predict(X)
             scaled_preds.append(preds[-1] / last_price)
             print('scaled prediction:', str(preds[-1] / last_price))
@@ -216,5 +244,6 @@ def load_models_r2s():
 
 
 if __name__ == "__main__":
+    make_and_save_models()
     ms, r2s = load_models_r2s()
     get_future_preds(ms, r2s)

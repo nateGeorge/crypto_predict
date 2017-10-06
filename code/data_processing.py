@@ -228,3 +228,21 @@ def create_feats_to_current(df, history=300, future=5):
     targs = np.array(targets).reshape(-1, 1)
 
     return feats, targs
+
+
+def make_mva_features(rs):
+    """
+    makes moving average features and price diff target for linear regression
+
+    :param rs: resampled dataframe
+    """
+    # 24-hour moving average of typical price
+    rs['mva_tp_24'] = rs['typical_price'].rolling(24).mean().bfill()
+    # calculate slope/derivative of 24h mva
+    rs['mva_tp_24_diff'] = rs['mva_tp_24'].diff().bfill()
+    # make target, the 24 hour price difference
+    rs['24h_price_diff'] = rs['typical_price'].copy()
+    rs['24h_price_diff'].iloc[24:] = rs['typical_price'].iloc[24:].copy().values - rs['typical_price'].iloc[:-24].copy().values
+    rs['24h_price_diff'].iloc[:24] = rs['24h_price_diff'].iloc[24].copy()
+
+    return rs

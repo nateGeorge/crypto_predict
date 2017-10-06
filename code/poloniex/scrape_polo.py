@@ -231,6 +231,17 @@ def save_all_trade_history():
             save_trade_history(df, c, update)
 
 
+def get_all_loans():
+    """
+    """
+    pass
+
+
+def get_loans(m='BTC_ETH'):
+    """
+    """
+    pass
+
 
 
 # TODO: get all trade history
