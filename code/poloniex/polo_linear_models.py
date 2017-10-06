@@ -60,14 +60,16 @@ def make_linear_models_sklearn():
 
 def load_data(m):
     notloaded = True
+    sleep_time = 10 # start with 10s sleep time
     while notloaded:
         try:
             df = pe.read_trade_hist(m)
             notloaded = False
-        except EOFError:  # this happens if the data is being written currently
+        except EOFError:  # this happens if the data is being written currently I think
             #...give it a bit to finish scraping
-            print('EOF error, sleeping for a minute...')
-            time.sleep(60)
+            print('EOF error, pausing for', str(sleep_time) + 's...')
+            time.sleep(sleep_time)
+            sleep_time += 10
 
     return df
 
@@ -149,6 +151,7 @@ def get_future_preds(models, r2s):
             # resamples to the hour
             rs_full = dp.resample_ohlc(df, resamp='H')
             rs_full = dp.make_mva_features(rs_full)
+            rs_full = cts.create_tas(bars=rs_full, col='typical_price')
             last_price = rs_full.iloc[-1]['typical_price']
             cur_mva_diffs.append(rs_full.iloc[-1]['mva_tp_24_diff'])
             x_cols = ['bband_u',
@@ -174,7 +177,9 @@ def get_future_preds(models, r2s):
                         'willr',
                         'mva_tp_24_diff',
                         'direction_volume']
-            X = sm.add_constant(rs_full[x_cols].iloc[-hist:].values)
+
+            X = sm.add_constant(rs_full[x_cols].iloc[-hist:].values, has_constant='add')
+            print(X.shape)
             preds = models[m].predict(X)
             scaled_preds.append(preds[-1] / last_price)
             print('scaled prediction:', str(preds[-1] / last_price))
@@ -244,6 +249,5 @@ def load_models_r2s():
 
 
 if __name__ == "__main__":
-    make_and_save_models()
     ms, r2s = load_models_r2s()
     get_future_preds(ms, r2s)
