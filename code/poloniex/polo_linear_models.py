@@ -82,7 +82,7 @@ def make_linear_models():
     hist = 12
     models = {}
     r2s = {}
-    for m in MARKETS:
+    for m in sorted(MARKETS):
         cut = 5000
         print('loading', m + '...')
         df = load_data(m)
@@ -95,42 +95,125 @@ def make_linear_models():
             cut = 2000
 
         rs_full = dp.make_mva_features(rs_full)
-        rs_full = cts.create_tas(bars=rs_full, col='typical_price')
+        rs_full = cts.create_tas(bars=rs_full)
         # skip the first 'cut' points
         rs_full = rs_full.iloc[cut:]
 
-        x_cols = ['bband_u',
-                    'bband_m',
-                    'bband_l',
-                    'dema',
-                    'ema',
-                    'midp',
-                    'tema',
-                    'trima',
-                    'ad',
-                    'adosc',
-                    'obv',
-                    'trange',
-                    'mom',
-                    'apo',
-                    'bop',
-                    'cci',
-                    'macd',
-                    'macdsignal',
-                    'macdhist',
-                    'ppo',
-                    'willr',
-                    'mva_tp_24_diff',
-                    'direction_volume']
-        X = sm.add_constant(rs_full[x_cols].iloc[24 - hist:-hist].values)
+        x_cols = get_xcols()
+        X = sm.add_constant(rs_full[x_cols].iloc[24 - hist:-hist].values, has_constant='add')
         y = rs_full['24h_price_diff'].iloc[24:].values
         model = sm.OLS(y, X).fit()
-        r2 = model.rsquared
+        r2 = model.rsquared_adj
         print('r^2 for', m, ':', '%.3f' % r2)
         models[m] = model
         r2s[m] = r2
 
     return models, r2s
+
+
+def get_xcols():
+    indicators = ['bband_u_cl', # bollinger bands
+                 'bband_m_cl',
+                 'bband_l_cl',
+                 'bband_u_tp',
+                 'bband_m_tp',
+                 'bband_l_tp',
+                 'dema_cl',
+                 'dema_tp',
+                 'ema_cl',
+                 'ema_tp',
+                 'ht_tl_cl',
+                 'ht_tl_tp',
+                 'kama_cl',
+                 'kama_tp',
+                #  'mama_cl',
+                #  'mama_tp',
+                #  'fama_cl',
+                #  'fama_tp',
+                #  'mama_cl_osc',
+                #  'mama_tp_osc',
+                 'midp_cl',
+                 'midp_tp',
+                 'midpr',
+                 'sar',
+                 'tema_cl',
+                 'tema_tp',
+                 'trima_cl',
+                 'trima_tp',
+                 'wma_cl',
+                 'wma_tp',
+                 'adx',
+                 'adxr',
+                 'apo_cl',
+                 'apo_tp',
+                 'arup', # aroon
+                 'ardn',
+                 'aroonosc',
+                 'bop',
+                 'cci',
+                 'cmo_cl',
+                 'cmo_tp',
+                 'dx',
+                 'macd_cl',
+                 'macdsignal_cl',
+                 'macdhist_cl',
+                 'macd_tp',
+                 'macdsignal_tp',
+                 'macdhist_tp',
+                 'mfi',
+                 'mdi',
+                 'mdm',
+                 'mom_cl',
+                 'mom_tp',
+                 'pldi',
+                 'pldm',
+                 'ppo_tp',
+                 'roc_cl',
+                 'roc_tp',
+                 'rocp_cl',
+                 'rocp_tp',
+                 'rocr_cl',
+                 'rocr_tp',
+                 'rocr_cl_100',
+                 'rocr_tp_100',
+                 'rsi_cl',
+                 'rsi_tp',
+                 'slowk', # stochastic oscillator
+                 'slowd',
+                 'fastk',
+                 'fastd',
+                 'strsi_cl_k',
+                 'strsi_cl_d',
+                 'strsi_tp_k',
+                 'strsi_tp_d',
+                 'trix_cl',
+                 'trix_tp',
+                 'ultosc',
+                 'willr',
+                 'ad',
+                 'adosc',
+                 'obv_cl',
+                 'obv_tp',
+                 'atr',
+                 'natr',
+                 'trange',
+                 'ht_dcp_cl',
+                 'ht_dcp_tp',
+                 'ht_dcph_cl',
+                 'ht_dcph_tp',
+                 'ht_ph_cl',
+                 'ht_ph_tp',
+                 'ht_q_cl',
+                 'ht_q_tp',
+                 'ht_s_cl',
+                 'ht_s_tp',
+                 'ht_ls_cl',
+                 'ht_ls_tp',
+                 'ht_tr_cl',
+                 'ht_tr_tp'
+                 ]
+
+    return indicators + ['mva_tp_24_diff', 'direction_volume']
 
 
 def get_future_preds(models, r2s):
@@ -151,38 +234,15 @@ def get_future_preds(models, r2s):
             # resamples to the hour
             rs_full = dp.resample_ohlc(df, resamp='H')
             rs_full = dp.make_mva_features(rs_full)
-            rs_full = cts.create_tas(bars=rs_full, col='typical_price')
+            rs_full = cts.create_tas(bars=rs_full)
             last_price = rs_full.iloc[-1]['typical_price']
             cur_mva_diffs.append(rs_full.iloc[-1]['mva_tp_24_diff'])
-            x_cols = ['bband_u',
-                        'bband_m',
-                        'bband_l',
-                        'dema',
-                        'ema',
-                        'midp',
-                        'tema',
-                        'trima',
-                        'ad',
-                        'adosc',
-                        'obv',
-                        'trange',
-                        'mom',
-                        'apo',
-                        'bop',
-                        'cci',
-                        'macd',
-                        'macdsignal',
-                        'macdhist',
-                        'ppo',
-                        'willr',
-                        'mva_tp_24_diff',
-                        'direction_volume']
 
+            x_cols = get_xcols()
             X = sm.add_constant(rs_full[x_cols].iloc[-hist:].values, has_constant='add')
-            print(X.shape)
             preds = models[m].predict(X)
             scaled_preds.append(preds[-1] / last_price)
-            print('scaled prediction:', str(preds[-1] / last_price))
+            print('scaled prediction:', '%.3f' % (scaled_preds[-1] * 100) + '%')
             pred_pairs.append(m)
 
     scaled_preds = np.array(scaled_preds)
