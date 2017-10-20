@@ -205,7 +205,7 @@ def create_tas(df=None, bars=None, verbose=False):
     bars['midpr'] = talib.MIDPRICE(mult_high, mult_low, timeperiod=14) / mult
 
     # parabolic sar
-    bars['sar'] = talib.SAR(mult_high, mult_low, acceleration=0, maximum=0)
+    bars['sar'] = talib.SAR(mult_high, mult_low, acceleration=0.02, maximum=0.2) / mult
     # need to make an oscillator for this
 
     # triple exponential moving average
