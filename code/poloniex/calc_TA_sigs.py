@@ -17,30 +17,58 @@ def create_tas(df=None, bars=None, verbose=False):
      'bband_u_tp',
      'bband_m_tp',
      'bband_l_tp',
+     'bband_u_cl_diff',
+     'bband_m_cl_diff',
+     'bband_l_cl_diff',
+     'bband_u_cl_diff_hi',
+     'bband_l_cl_diff_lo',
+     'bband_u_tp_diff',
+     'bband_m_tp_diff',
+     'bband_l_tp_diff',
+     'bband_u_tp_diff_hi',
+     'bband_l_tp_diff_lo',
      'dema_cl',
      'dema_tp',
+     'dema_cl_diff',
+     'dema_tp_diff',
      'ema_cl',
      'ema_tp',
+     'ema_cl_diff',
+     'ema_tp_diff',
      'ht_tl_cl',
      'ht_tl_tp',
+     'ht_tl_cl_diff',
+     'ht_tl_tp_diff',
      'kama_cl',
      'kama_tp',
-     'mama_cl',
-     'mama_tp',
-     'fama_cl',
-     'fama_tp',
-     'mama_cl_osc',
-     'mama_tp_osc',
+     'kama_cl_diff',
+     'kama_tp_diff',
+    #  'mama_cl',  # having problems with these
+    #  'mama_tp',
+    #  'fama_cl',
+    #  'fama_tp',
+    #  'mama_cl_osc',
+    #  'mama_tp_osc',
      'midp_cl',
      'midp_tp',
+     'midp_cl_diff',
+     'midp_tp_diff',
      'midpr',
+     'midpr_diff',
      'sar',
+     'sar_diff',
      'tema_cl',
      'tema_tp',
+     'tema_cl_diff',
+     'tema_tp_diff',
      'trima_cl',
      'trima_tp',
+     'trima_cl_diff',
+     'trima_tp_diff',
      'wma_cl',
      'wma_tp',
+     'wma_cl_diff',
+     'wma_tp_diff',
      'adx',
      'adxr',
      'apo_cl',
@@ -66,6 +94,7 @@ def create_tas(df=None, bars=None, verbose=False):
      'mom_tp',
      'pldi',
      'pldm',
+     'ppo_cl',
      'ppo_tp',
      'roc_cl',
      'roc_tp',
@@ -147,6 +176,11 @@ def create_tas(df=None, bars=None, verbose=False):
     bars['bband_u_cl'] = upper_cl / mult
     bars['bband_m_cl'] = middle_cl / mult
     bars['bband_l_cl'] = lower_cl / mult
+    bars['bband_u_cl_diff'] = bars['bband_u_cl'] - bars['close']
+    bars['bband_m_cl_diff'] = bars['bband_m_cl'] - bars['close']
+    bars['bband_l_cl_diff'] = bars['bband_l_cl'] - bars['close']
+    bars['bband_u_cl_diff_hi'] = bars['bband_u_cl'] - bars['high']
+    bars['bband_l_cl_diff_lo'] = bars['bband_l_cl'] - bars['low']
     # bars['bband_u_cl'].fillna(method='bfill', inplace=True)
     # bars['bband_m_cl'].fillna(method='bfill', inplace=True)
     # bars['bband_l_cl'].fillna(method='bfill', inplace=True)
@@ -159,6 +193,11 @@ def create_tas(df=None, bars=None, verbose=False):
     bars['bband_u_tp'] = upper_tp / mult
     bars['bband_m_tp'] = middle_tp / mult
     bars['bband_l_tp'] = lower_tp / mult
+    bars['bband_u_tp_diff'] = bars['bband_u_tp'] - bars['typical_price']
+    bars['bband_m_tp_diff'] = bars['bband_m_tp'] - bars['typical_price']
+    bars['bband_l_tp_diff'] = bars['bband_l_tp'] - bars['typical_price']
+    bars['bband_u_tp_diff_hi'] = bars['bband_u_tp'] - bars['high']
+    bars['bband_l_tp_diff_lo'] = bars['bband_l_tp'] - bars['low']
     # think this is already taken care of at the end...check
     # bars['bband_u_tp'].fillna(method='bfill', inplace=True)
     # bars['bband_m_tp'].fillna(method='bfill', inplace=True)
@@ -167,19 +206,28 @@ def create_tas(df=None, bars=None, verbose=False):
     # Double Exponential Moving Average
     bars['dema_cl'] = talib.DEMA(mult_close, timeperiod=30) / mult
     bars['dema_tp'] = talib.DEMA(mult_tp, timeperiod=30) / mult
+    bars['dema_cl_diff'] = bars['dema_cl'] - bars['close']
+    bars['dema_tp_diff'] = bars['dema_tp'] - bars['typical_price']
+
 
     # exponential moving Average
     bars['ema_cl'] = talib.EMA(mult_close, timeperiod=30) / mult
     bars['ema_tp'] = talib.EMA(mult_tp, timeperiod=30) / mult
+    bars['ema_cl_diff'] = bars['ema_cl'] - bars['close']
+    bars['ema_tp_diff'] = bars['ema_tp'] - bars['typical_price']
 
     # Hilbert Transform - Instantaneous Trendline - like a mva but a bit different, should probably take slope or
     # use in another indicator
     bars['ht_tl_cl'] = talib.HT_TRENDLINE(mult_close) / mult
     bars['ht_tl_tp'] = talib.HT_TRENDLINE(mult_tp) / mult
+    bars['ht_tl_cl_diff'] = bars['ht_tl_cl'] - bars['close']
+    bars['ht_tl_tp_diff'] = bars['ht_tl_tp'] - bars['typical_price']
 
     # KAMA - Kaufman's Adaptative Moving Average -- need to take slope or something
     bars['kama_cl'] = talib.KAMA(mult_close, timeperiod=30) / mult
     bars['kama_tp'] = talib.KAMA(mult_tp, timeperiod=30) / mult
+    bars['kama_cl_diff'] = bars['kama_cl'] - bars['close']
+    bars['kama_tp_diff'] = bars['kama_tp'] - bars['typical_price']
 
     # MESA Adaptive Moving Average -- getting TA_BAD_PARAM error
     # mama_cl, fama_cl = talib.MAMA(mult_close, fastlimit=100, slowlimit=100) / mult
@@ -196,30 +244,41 @@ def create_tas(df=None, bars=None, verbose=False):
     # Moving average with variable period
     bars['mavp_cl'] = talib.MAVP(mult_close, np.arange(mult_close.shape[0]).astype(np.float64), minperiod=2, maxperiod=30, matype=0) / mult
     bars['mavp_tp'] = talib.MAVP(mult_tp, np.arange(mult_tp.shape[0]).astype(np.float64), minperiod=2, maxperiod=30, matype=0) / mult
+    bars['mavp_cl_diff'] = bars['mavp_cl'] - bars['close']
+    bars['mavp_tp_diff'] = bars['mavp_tp'] - bars['typical_price']
 
     # midpoint over period
     bars['midp_cl'] = talib.MIDPOINT(mult_close, timeperiod=14) / mult
     bars['midp_tp'] = talib.MIDPOINT(mult_tp, timeperiod=14) / mult
+    bars['midp_cl_diff'] = bars['midp_cl'] - bars['close']
+    bars['midp_tp_diff'] = bars['midp_tp'] - bars['typical_price']
 
     # midpoint price over period
     bars['midpr'] = talib.MIDPRICE(mult_high, mult_low, timeperiod=14) / mult
+    bars['midpr_diff'] = bars['midpr'] - bars['typical_price']
 
     # parabolic sar
     bars['sar'] = talib.SAR(mult_high, mult_low, acceleration=0.02, maximum=0.2) / mult
+    bars['sar_diff'] = bars['sar'] - bars['typical_price']
     # need to make an oscillator for this
 
     # triple exponential moving average
-    bars['tema_cl'] = talib.TEMA(mult_close, timeperiod=30)
-    bars['tema_tp'] = talib.TEMA(mult_tp, timeperiod=30)
+    bars['tema_cl'] = talib.TEMA(mult_close, timeperiod=30) / mult
+    bars['tema_tp'] = talib.TEMA(mult_tp, timeperiod=30) / mult
+    bars['tema_cl_diff'] = bars['tema_cl'] - bars['close']
+    bars['tema_tp_diff'] = bars['tema_tp'] - bars['typical_price']
 
     # triangular ma
-    bars['trima_cl'] = talib.TRIMA(mult_close, timeperiod=30)
-    bars['trima_tp'] = talib.TRIMA(mult_tp, timeperiod=30)
+    bars['trima_cl'] = talib.TRIMA(mult_close, timeperiod=30) / mult
+    bars['trima_tp'] = talib.TRIMA(mult_tp, timeperiod=30) / mult
+    bars['trima_cl_diff'] = bars['trima_cl'] - bars['close']
+    bars['trima_tp_diff'] = bars['trima_tp'] - bars['typical_price']
 
     # weighted moving average
-    bars['wma_cl'] = talib.WMA(mult_close, timeperiod=30)
-    bars['wma_tp'] = talib.WMA(mult_tp, timeperiod=30)
-
+    bars['wma_cl'] = talib.WMA(mult_close, timeperiod=30) / mult
+    bars['wma_tp'] = talib.WMA(mult_tp, timeperiod=30) / mult
+    bars['wma_cl_diff'] = bars['wma_cl'] - bars['close']
+    bars['wma_tp_diff'] = bars['wma_tp'] - bars['typical_price']
 
     #### momentum indicators  -- for now left out those with unstable periods
 
