@@ -1,6 +1,10 @@
-import pandas as pd
+# core
 from glob import iglob
 import os
+import time
+
+# installed
+import pandas as pd
 
 
 def get_home_dir(repo_name='crypto_predict'):
@@ -30,11 +34,19 @@ def read_orderbook(market='BTC_AMP'):
 def read_trade_hist(market='BTC_AMP', drop=0):
     datapath = HOME_DIR + 'data/trade_history/poloniex/'
     filename = datapath + market + '.csv.gz'
-    df = pd.read_csv(filename, index_col='date', parse_dates=True)
+    while True:
+        try:
+            df = pd.read_csv(filename, index_col='date', parse_dates=True)
+            break
+        except EOFError:
+            print('EOFError, waiting 10s...')
+            time.sleep(10)
+
     # sometimes might want to drop the first few thousand points because
     # they are crazy
     df = df.iloc[drop:]
     return df
+
 
 def get_all_trade_pairs():
     datapath = HOME_DIR + 'data/trade_history/poloniex/'
