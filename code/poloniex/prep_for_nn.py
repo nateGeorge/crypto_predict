@@ -1,0 +1,248 @@
+"""
+prepares data for neural network models (10/2017)
+
+meant to be run from the poloniex dir
+"""
+# core
+import os
+import sys
+
+# custom
+sys.path.append('..')
+import polo_eda as pe
+import calc_TA_sigs as cts
+import data_processing as dp
+from utils import get_home_dir
+
+# installed
+from tqdm import tqdm
+from sklearn.preprocessing import StandardScaler as SS
+import h5py
+import numpy as np
+
+# yeah yeah, should be caps
+indicators = ['bband_u_cl', # bollinger bands
+             'bband_m_cl',
+             'bband_l_cl',
+             'bband_u_tp',
+             'bband_m_tp',
+             'bband_l_tp',
+             'bband_u_cl_diff',
+             'bband_m_cl_diff',
+             'bband_l_cl_diff',
+             'bband_u_cl_diff_hi',
+             'bband_l_cl_diff_lo',
+             'bband_u_tp_diff',
+             'bband_m_tp_diff',
+             'bband_l_tp_diff',
+             'bband_u_tp_diff_hi',
+             'bband_l_tp_diff_lo',
+             'dema_cl',
+             'dema_tp',
+             'dema_cl_diff',
+             'dema_tp_diff',
+             'ema_cl',
+             'ema_tp',
+             'ema_cl_diff',
+             'ema_tp_diff',
+             'ht_tl_cl',
+             'ht_tl_tp',
+             'ht_tl_cl_diff',
+             'ht_tl_tp_diff',
+             'kama_cl',
+             'kama_tp',
+             'kama_cl_diff',
+             'kama_tp_diff',
+            #  'mama_cl',  # having problems with these
+            #  'mama_tp',
+            #  'fama_cl',
+            #  'fama_tp',
+            #  'mama_cl_osc',
+            #  'mama_tp_osc',
+             'midp_cl',
+             'midp_tp',
+             'midp_cl_diff',
+             'midp_tp_diff',
+             'midpr',
+             'midpr_diff',
+             'sar',
+             'sar_diff',
+             'tema_cl',
+             'tema_tp',
+             'tema_cl_diff',
+             'tema_tp_diff',
+             'trima_cl',
+             'trima_tp',
+             'trima_cl_diff',
+             'trima_tp_diff',
+             'wma_cl',
+             'wma_tp',
+             'wma_cl_diff',
+             'wma_tp_diff',
+             'adx',
+             'adxr',
+             'apo_cl',
+             'apo_tp',
+             'arup', # aroon
+             'ardn',
+             'aroonosc',
+             'bop',
+             'cci',
+             'cmo_cl',
+             'cmo_tp',
+             'dx',
+             'macd_cl',
+             'macdsignal_cl',
+             'macdhist_cl',
+             'macd_tp',
+             'macdsignal_tp',
+             'macdhist_tp',
+             'mfi',
+             'mdi',
+             'mdm',
+             'mom_cl',
+             'mom_tp',
+             'pldi',
+             'pldm',
+             'ppo_cl',
+             'ppo_tp',
+             'roc_cl',
+             'roc_tp',
+             'rocp_cl',
+             'rocp_tp',
+             'rocr_cl',
+             'rocr_tp',
+             'rocr_cl_100',
+             'rocr_tp_100',
+             'rsi_cl',
+             'rsi_tp',
+             'slowk', # stochastic oscillator
+             'slowd',
+             'fastk',
+             'fastd',
+             'strsi_cl_k',
+             'strsi_cl_d',
+             'strsi_tp_k',
+             'strsi_tp_d',
+             'trix_cl',
+             'trix_tp',
+             'ultosc',
+             'willr',
+             'ad',
+             'adosc',
+             'obv_cl',
+             'obv_tp',
+             'atr',
+             'natr',
+             'trange',
+             'ht_dcp_cl',
+             'ht_dcp_tp',
+             'ht_dcph_cl',
+             'ht_dcph_tp',
+             'ht_ph_cl',
+             'ht_ph_tp',
+             'ht_q_cl',
+             'ht_q_tp',
+             'ht_s_cl',
+             'ht_s_tp',
+             'ht_ls_cl',
+             'ht_ls_tp',
+             'ht_tr_cl',
+             'ht_tr_tp'
+             ]
+# home_dir = get_home_dir()  # data too big for this right now
+home_dir = '/media/nate/data_lake/crytpo_predict/'
+
+
+def make_data_dirs():
+    for d in [home_dir + 'data', home_dir + 'data/nn_feats_targs', home_dir + 'data/nn_feats_targs/poloniex']:
+        if not os.path.exists(d):
+            os.mkdir(d)
+
+
+def prep_polo_nn(mkt='BTC_STR'):
+    """
+    right now this is predicting 24h into the future.  need to make future time arbitrary
+    """
+    datafile = home_dir + 'data/nn_feats_targs/poloniex/' + mkt
+    if os.path.exists(datafile):
+        print('loading...')
+        f = h5py.File(datafile, 'r')
+        xform_train = f['xform_train'][:]
+        xform_test = f['xform_test'][:]
+        train_targs = f['train_targs'][:]
+        test_targs = f['test_targs'][:]
+        f.close()
+    else:
+        print('creating new...')
+        df = pe.read_trade_hist(mkt)
+        # resamples to the hour
+        rs_full = dp.resample_ohlc(df, resamp='H')
+        rs_full = dp.make_mva_features(rs_full)
+        bars = cts.create_tas(bars=rs_full, verbose=True)
+        # make target columns
+        col = '24h_price_diff'
+        bars[col] = bars['typical_price'].copy()
+        bars[col] = np.hstack((np.repeat(bars[col].iloc[24], 24), bars['typical_price'].iloc[24:].values - bars['typical_price'].iloc[:-24].values))
+        bars['24h_price_diff_pct'] = bars[col] / np.hstack((np.repeat(bars['typical_price'].iloc[24], 24), bars['typical_price'].iloc[24:].values))
+        # drop first 24 points because they are repeated
+        bars = bars.iloc[24:]
+        # also drop first 1000 points because usually they are bogus
+        bars = bars.iloc[1000:]
+        feat_cols = indicators + ['mva_tp_24_diff', 'direction_volume', 'volume']
+        features = bars[feat_cols].values
+
+        new_feats, targets = create_hist_feats(features, bars, hist_points=480)
+        xform_train, xform_test, train_targs, test_targs = scale_historical_feats(new_feats, targets, test_size=5000)
+
+        f = h5py.File(datafile, 'w')
+        f.create_dataset('xform_train', data=xform_train)
+        f.create_dataset('xform_test', data=xform_test)
+        f.create_dataset('train_targs', data=train_targs)
+        f.create_dataset('test_targs', data=test_targs)
+        f.close()
+
+    return xform_train, xform_test, train_targs, test_targs
+
+
+def create_hist_feats(features, bars, hist_points=480):
+    # make historical features
+    new_feats = []
+    for i in range(hist_points, features.shape[0]):
+        new_feats.append(features[i - hist_points:i, :])
+
+    new_feats = np.array(new_feats)
+    targets = bars['24h_price_diff_pct'].iloc[hist_points:].values
+    return new_feats, targets
+
+
+def scale_historical_feats(new_feats, targets, test_size=5000):
+    # also makes train/test
+    train_feats = new_feats[:-test_size]
+    train_targs = targets[:-test_size]
+    test_feats = new_feats[-test_size:]
+    test_targs = targets[-test_size:]
+
+    xform_train = []
+    xform_test = []
+    s = SS()
+    for j in tqdm(range(train_feats.shape[0])):  # timesteps
+        xform_train_ts = []
+        for i in range(train_feats.shape[2]):  # number of indicators/etc
+            xform_train_ts.append(s.fit_transform(train_feats[j, :, i].reshape(-1, 1))[:, 0])
+
+        xform_train_ts = np.array(xform_train_ts).reshape(train_feats.shape[1], train_feats.shape[2])
+        xform_train.append(xform_train_ts)
+
+    for j in tqdm(range(test_feats.shape[0])):
+        xform_test_ts = []
+        for i in range(test_feats.shape[2]):  # number of indicators/etc
+            xform_test_ts.append(s.fit_transform(test_feats[j, :, i].reshape(-1, 1))[:, 0])
+
+        xform_test_ts = np.array(xform_test_ts).reshape(test_feats.shape[1], test_feats.shape[2])
+        xform_test.append(xform_test_ts)
+
+    xform_train = np.array(xform_train).reshape(train_feats.shape[0], train_feats.shape[1], train_feats.shape[2])
+    xform_test = np.array(xform_test).reshape(test_feats.shape[0], test_feats.shape[1], test_feats.shape[2])
+
+    return xform_train, xform_test, train_targs, test_targs
