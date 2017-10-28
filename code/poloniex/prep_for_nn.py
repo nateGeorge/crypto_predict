@@ -160,12 +160,12 @@ def make_data_dirs():
             os.mkdir(d)
 
 
-def prep_polo_nn(mkt='BTC_STR'):
+def prep_polo_nn(mkt='BTC_STR', make_fresh=False):
     """
     right now this is predicting 24h into the future.  need to make future time arbitrary
     """
     datafile = home_dir + 'data/nn_feats_targs/poloniex/' + mkt
-    if os.path.exists(datafile):
+    if os.path.exists(datafile) and not make_fresh:
         print('loading...')
         f = h5py.File(datafile, 'r')
         xform_train = f['xform_train'][:]

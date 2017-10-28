@@ -48,6 +48,8 @@ def train_all_pairs():
     btc_pairs = [p for p in pairs if 'BTC' == p[:3]]
     usdt_pairs = [p for p in pairs if 'USDT' == p[:4]]
     pairs = btc_pairs + usdt_pairs
+    for p in pairs:
+        xform_train, xform_test, train_targs, test_targs = pfn.prep_polo_nn(mkt=p)
 
 
 def stock_loss_mae_log(y_true, y_pred):
