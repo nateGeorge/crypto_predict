@@ -114,11 +114,7 @@ def continuously_save_order_books(interval=600):
     """
     def keep_saving():
         while True:
-            try:
-                save_all_order_books()
-            except:
-                traceback.print_exc()
-
+            save_all_order_books()
             time.sleep(interval)
 
     thread = Thread(target=keep_saving)
@@ -178,12 +174,38 @@ def convert_earliest_to_latest(market):
         print('file is already newest to oldest!')
 
 
+def clean_extra_headers(market):
+    """
+    when first appending, a few of the headers accidentally got in the data and are
+    effing everything up
+    """
+    datafile = TRADE_DATA_DIR + market + '.csv.gz'
+    old_df = pd.read_csv(datafile, index_col='date', parse_dates=['date'])
+    if 'date' in old_df.index:
+        old_df.drop('date', inplace=True)  # drops rows where the index is the word 'date'
+        old_df.drop_duplicates(inplace=True)
+        old_df.sort_index(inplace=True)
+        old_df.to_csv(datafile, compression='gzip', chunksize=CSV_WRITE_CHUNK)
+    else:
+        print('already clean! skipping')
+
+
+def clean_all_headers():
+    ticks = polo.returnTicker()
+    pairs = sorted(ticks.keys())
+    for c in pairs:
+        print('cleaning', c)
+        clean_extra_headers(c)
+
+
 def remove_dupes(market='BTC_AMP'):
     """
     pretty self-explanatory
     """
+    # datafile = TRADE_DATA_DIR + market + '.csv.gz'
     ft_datafile = TRADE_DATA_DIR + market + '.ft'
     old_df = ft.read_dataframe(ft_datafile)
+    # old_df = pd.read_csv(datafile, index_col='date', parse_dates=['date'], infer_datetime_format=True)
     dd_df = old_df.drop_duplicates()
     num_dupes = old_df.shape[0] - dd_df.shape[0]
     if num_dupes == 0:
@@ -201,12 +223,12 @@ def remove_dupes(market='BTC_AMP'):
         dd_sh1 = dd_df.shape[0]
         dd_df = dd_df.drop_duplicates()
         num_dupes = dd_sh1 - dd_df.shape[0]
-        if num_dupes == 0:
-            break
+
 
     dd_df = dd_df.drop_duplicates()  # one more time to be extra sure
     dd_df.sort_index(inplace=True)
     ft.write_dataframe(dd_df, ft_datafile)
+    # dd_df.to_csv(datafile, compression='gzip', chunksize=CSV_WRITE_CHUNK)
 
 
 def remove_all_dupes():
@@ -220,6 +242,7 @@ def remove_all_dupes():
 def check_for_dupes(market='BTC_AMP'):
     datafile = TRADE_DATA_DIR + market + '.ft'
     old_df = ft.read_dataframe(datafile)
+    # old_df = pd.read_csv(datafile, index_col='date', parse_dates=['date'], infer_datetime_format=True)
     dd_df = old_df.drop_duplicates()
     print(old_df.shape[0] - dd_df.shape[0], 'dupes')
 
@@ -232,12 +255,13 @@ def make_last_550_h_df(market):
     """
     datafile = TRADE_DATA_DIR + market + '.ft'
     sm_datafile = SM_TRADE_DATA_DIR + market + '.ft'
-    full_df = ft.read_dataframe(datafile)
-    latest_ts = full_df['date'].max()
+    # full_df = pd.read_csv(datafile, index_col='date', parse_dates=['date'])
+    latest_ts = full_df.index.max()
     past_ts = latest_ts - timedelta(hours=550)
-    mask = (full_df['date'] > past_ts) & (full_df['date'] <= latest_ts)
+    mask = (full_df.index > past_ts) & (full_df.index <= latest_ts)
     small_df = full_df.loc[mask]
     ft.write_dataframe(small_df, sm_datafile)
+    # small_df.to_csv(sm_datafile, compression='gzip', chunksize=CSV_WRITE_CHUNK)
 
 
 def make_all_last_550_h_dfs():
@@ -253,13 +277,13 @@ def make_all_last_550_h_dfs():
 
 
 def update_550_h_df(full_df, market):
-    sm_datafile = SM_TRADE_DATA_DIR + market + '.ft'
-    sm_df = ft.read_dataframe(sm_datafile)
-    latest_ts = full_df['date'].max()
+    sm_datafile = SM_TRADE_DATA_DIR + market + '.csv.gz'
+    sm_df = pd.read_csv(sm_datafile, index_col='date', parse_dates=['date'])
+    latest_ts = full_df.index.max()
     past_ts = latest_ts - timedelta(hours=550)
-    mask = (full_df['date'] > past_ts) & (full_df['date'] <= latest_ts)
+    mask = (full_df.index > past_ts) & (full_df.index <= latest_ts)
     small_df = full_df.loc[mask]
-    ft.write_dataframe(small_df, sm_datafile)
+    small_df.to_csv(sm_datafile, compression='gzip', chunksize=CSV_WRITE_CHUNK)
 
 
 def convert_csv_feather(market='BTC_AMP'):
@@ -278,34 +302,40 @@ def convert_all_to_feather():
         convert_csv_feather(market=c)
 
 
-def convert_ft_hdf5(market='BTC_AMP'):
-    ft_datafile = TRADE_DATA_DIR + market + '.ft'
-    hdf_datafile = TRADE_DATA_DIR + market + '.hdf5'
-    old_df = ft.read_dataframe(ft_datafile)
-    old_df.to_hdf(hdf_datafile, 'data', mode='w', complib='blosc', complevel=9, format='table')
-
-
-def convert_all_to_hdf5():
-    ticks = polo.returnTicker()
-    pairs = sorted(ticks.keys())
-    for c in pairs:
-        print('converting to hdf5:', c)
-        convert_ft_hdf5(market=c)
-
-
-def get_trade_history(market='BTC_AMP', two_h_delay=False, latest=None):
+def get_trade_history(market='BTC_BCN', two_h_delay=False, latest=None):
     """
     :param two_h_delay: if a 2 hour delay should be enacted between scrapings
     :param latest: pandas series with latest trade datapoint in csv
     """
     # first check the latest date on data already there
-    datafile = TRADE_DATA_DIR + market + '.ft'
+    datafile = TRADE_DATA_DIR + market + '.csv.gz'
     latest_ts = None
     old_df = None
     if os.path.exists(datafile):
         # right now the csvs are saved as earliest data in the top
-        old_df = ft.read_dataframe(datafile)
-        latest_ts = old_df.iloc[-1]['date'].value / 10**9
+        # and latest data in the bottom.  Need to fix this, but for now
+        # this code is not run
+        earliest_to_latest = False  # instead, implemented another csv file that keeps track of latest scrape dates
+        if earliest_to_latest:
+            try:
+                cur_df = pd.read_csv(datafile, index_col='date', parse_dates=['date'], chunksize=1)
+                first = cur_df.get_chunk(1)
+                latest_ts = first.index[0].value / 10**9  # .value gets nanoseconds since epoch
+            except EOFError:
+                print('corrupted file, restoring from backup...')
+                old_df = recover_file(datafile)
+                latest_ts = old_df.index[0].value / 10**9
+        else:
+            if latest is None:
+                try:
+                    old_df = pd.read_csv(datafile, index_col='date', parse_dates=['date'])
+                except EOFError:
+                    print('corrupted file, restoring from backup...')
+                    old_df = recover_file(datafile)
+
+                latest_ts = old_df.index[-1].value / 10**9
+            else:
+                latest_ts = latest['date'].value / 10**9
 
         # get current timestamp in UTC...tradehist method takes utc times
         d = datetime.utcnow()
@@ -368,7 +398,11 @@ def get_trade_history(market='BTC_AMP', two_h_delay=False, latest=None):
     if full_df.shape[0] > 0:
         # sometimes some duplicates
         full_df.drop_duplicates(inplace=True)
+        full_df.set_index('date', inplace=True)
         # sorted from oldest at the top to newest at bottom for now
+        # don't need to do this after already sorting by tradeID
+        # full_df.sort_index(inplace=True)
+        # could also sort by trade ids
         for col in ['amount', 'rate', 'total']:
             full_df[col] = pd.to_numeric(full_df[col])
 
@@ -382,14 +416,28 @@ def save_trade_history(df, market, update, old_df=None):
     """
     Saves a dataframe of the trade history for a market.
     """
-    filename = TRADE_DATA_DIR + market + '.ft'
+    filename = TRADE_DATA_DIR + market + '.csv.gz'
     if update:
-        full_df = old_df.append(df)
-        full_df.drop_duplicates(inplace=True)
-        full_df.sort_values(by='date', inplace=True)
-        ft.write_dataframe(full_df, filename)
+        # TODO: need to get rid of reading the old DF, and just make_history_df
+        # sure there are no overlapping points, then write csv with mode='a'
+        if old_df is None:
+            # used to do all this, but changed to appending because latest date is last
+            # and can't scrape fast enough without appending
+            # old_df = pd.read_csv(filename,
+            #                     parse_dates=['date'],
+            #                     infer_datetime_format=True)
+            # old_df.set_index('date', inplace=True)
+            # full_df = old_df.append(df)
+            # full_df.drop_duplicates(inplace=True)
+            # full_df.sort_index(inplace=True)
+            df.to_csv(filename, header=False, compression='gzip', mode='a', chunksize=CSV_WRITE_CHUNK)
+        else:
+            full_df = old_df.append(df)
+            full_df.drop_duplicates(inplace=True)
+            full_df.sort_index(inplace=True)
+            full_df.to_csv(filename, compression='gzip', chunksize=CSV_WRITE_CHUNK)
     else:
-        ft.write_dataframe(df, filename)
+        df.to_csv(filename, compression='gzip', chunksize=CSV_WRITE_CHUNK)
 
 
 def save_all_trade_history(two_h_delay=False):
@@ -416,17 +464,15 @@ def save_all_trade_history(two_h_delay=False):
         if df is not None:
             print('saving', c)
             save_trade_history(df, c, update, old_df)
-
-            # update the latest scrape date
             if lat_scr_df is None:
-                lat_scr_df = df.iloc[-1:].copy()
+                lat_scr_df = df.iloc[-1:].copy().reset_index()
                 lat_scr_df['market'] = c
                 lat_scr_df.set_index('market', inplace=True)
                 lat_scr_df['tradeID'] = lat_scr_df['tradeID'].astype('int')
                 lat_scr_df['globalTradeID'] = lat_scr_df['globalTradeID'].astype('int')
                 lat_scr_df.to_csv(lat_scr_file, chunksize=CSV_WRITE_CHUNK)
             elif c in lat_scr_df.index:
-                temp_df = df.iloc[-1:].copy()
+                temp_df = df.iloc[-1:].copy().reset_index()
                 for col in lat_scr_df.columns:
                     lat_scr_df.loc[c, col] = temp_df.iloc[-1][col]
 
@@ -434,33 +480,13 @@ def save_all_trade_history(two_h_delay=False):
                 lat_scr_df['globalTradeID'] = lat_scr_df['globalTradeID'].astype('int')
                 lat_scr_df.to_csv(lat_scr_file, chunksize=CSV_WRITE_CHUNK)
             else:
-                temp_df = df.iloc[-1:].copy()
+                temp_df = df.iloc[-1:].copy().reset_index()
                 for col in lat_scr_df.columns:
                     lat_scr_df.loc[c, col] = temp_df.iloc[-1][col]
 
                 lat_scr_df['tradeID'] = lat_scr_df['tradeID'].astype('int')
                 lat_scr_df['globalTradeID'] = lat_scr_df['globalTradeID'].astype('int')
                 lat_scr_df.to_csv(lat_scr_file, chunksize=CSV_WRITE_CHUNK)
-
-    print('done!')
-
-
-def continuously_save_trade_history(interval=600):
-    """
-    Saves all order books every 'interval' seconds.
-    Poloniex allows 6 calls/second before your IP is banned.
-    """
-    def keep_saving():
-        while True:
-            try:
-                save_all_trade_history()
-            except:
-                traceback.print_exc()
-
-            time.sleep(interval)
-
-    thread = Thread(target=keep_saving)
-    thread.start()
 
 
 def get_all_loans():
