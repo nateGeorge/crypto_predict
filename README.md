@@ -13,6 +13,9 @@ no pip package as of now.
 
 # daily scraping
 ## Poloniex
+Probably best not to use cron actually, because when the computer shuts down, the files can get corrupted.
+Instead, should write a script that will start the scraping in tmux, so it can be stopped in a controlled fashion before rebooting.
+ 
 To scrape poloniex daily, add this to crontab (`crontab -e`):
 (min hr day month weekday file)
 

@@ -1,14 +1,15 @@
 """
 prepares data for neural network models (10/2017)
 
-meant to be run from the poloniex dir
+meant to be run from the home code dir
 """
 # core
 import os
 import sys
 
 # custom
-sys.path.append('..')
+sys.path.append('code')
+sys.path.append('code/poloniex')
 import polo_eda as pe
 import calc_TA_sigs as cts
 import data_processing as dp
@@ -19,6 +20,11 @@ from tqdm import tqdm
 from sklearn.preprocessing import StandardScaler as SS
 import h5py
 import numpy as np
+from poloniex import Poloniex
+
+key = os.environ.get('polo_key')
+sec = os.environ.get('polo_sec')
+polo = Poloniex(key, sec)
 
 # yeah yeah, should be caps
 indicators = ['bband_u_cl', # bollinger bands
@@ -158,6 +164,14 @@ def make_data_dirs():
     for d in [home_dir + 'data', home_dir + 'data/nn_feats_targs', home_dir + 'data/nn_feats_targs/poloniex']:
         if not os.path.exists(d):
             os.mkdir(d)
+
+
+def make_all_nn_data():
+    ticks = polo.returnTicker()
+    pairs = sorted(ticks.keys())
+    for c in pairs:
+        print('making data for', c)
+        prep_polo_nn(mkt=c)
 
 
 def prep_polo_nn(mkt='BTC_STR', make_fresh=False):
