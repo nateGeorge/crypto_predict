@@ -171,15 +171,22 @@ def make_all_nn_data():
     pairs = sorted(ticks.keys())
     for c in pairs:
         print('making data for', c)
-        prep_polo_nn(mkt=c)
+        _, _, _, _ = prep_polo_nn(mkt=c, skip_load=True)
 
 
-def prep_polo_nn(mkt='BTC_STR', make_fresh=False):
+def prep_polo_nn(mkt='BTC_STR', make_fresh=False, skip_load=False):
     """
     right now this is predicting 24h into the future.  need to make future time arbitrary
+    :param mkt: string, market pair to use
+    :param make_fresh: creates new files even if they exist
+    :param skip_load: if files already exist, just returns all Nones
     """
     datafile = home_dir + 'data/nn_feats_targs/poloniex/' + mkt
     if os.path.exists(datafile) and not make_fresh:
+        if skip_load:
+            print('files exist, skipping')
+            return None, None, None, None
+
         print('loading...')
         f = h5py.File(datafile, 'r')
         xform_train = f['xform_train'][:]
@@ -203,6 +210,10 @@ def prep_polo_nn(mkt='BTC_STR', make_fresh=False):
         bars = bars.iloc[24:]
         # also drop first 1000 points because usually they are bogus
         bars = bars.iloc[1000:]
+        if bars.shape[0] < 1000:
+            print('less than 1000 points, skipping...')
+            return None, None, None, None
+
         feat_cols = indicators + ['mva_tp_24_diff', 'direction_volume', 'volume']
         features = bars[feat_cols].values
 
@@ -210,10 +221,10 @@ def prep_polo_nn(mkt='BTC_STR', make_fresh=False):
         xform_train, xform_test, train_targs, test_targs = scale_historical_feats(new_feats, targets, test_size=5000)
 
         f = h5py.File(datafile, 'w')
-        f.create_dataset('xform_train', data=xform_train)
-        f.create_dataset('xform_test', data=xform_test)
-        f.create_dataset('train_targs', data=train_targs)
-        f.create_dataset('test_targs', data=test_targs)
+        f.create_dataset('xform_train', data=xform_train, compression='lzf')
+        f.create_dataset('xform_test', data=xform_test, compression='lzf')
+        f.create_dataset('train_targs', data=train_targs, compression='lzf')
+        f.create_dataset('test_targs', data=test_targs, compression='lzf')
         f.close()
 
     return xform_train, xform_test, train_targs, test_targs
@@ -230,8 +241,12 @@ def create_hist_feats(features, bars, hist_points=480):
     return new_feats, targets
 
 
-def scale_historical_feats(new_feats, targets, test_size=5000):
+def scale_historical_feats(new_feats, targets, test_size=5000, test_frac=0.2):
     # also makes train/test
+    # in case dataset is too small for 5k test points, adjust according to test_frac
+    if new_feats.shape[0] * test_frac < test_size:
+        test_size = int(new_feats.shape[0] * test_frac)
+
     train_feats = new_feats[:-test_size]
     train_targs = targets[:-test_size]
     test_feats = new_feats[-test_size:]
@@ -256,6 +271,7 @@ def scale_historical_feats(new_feats, targets, test_size=5000):
         xform_test_ts = np.array(xform_test_ts).reshape(test_feats.shape[1], test_feats.shape[2])
         xform_test.append(xform_test_ts)
 
+    print(train_feats.shape[0])
     xform_train = np.array(xform_train).reshape(train_feats.shape[0], train_feats.shape[1], train_feats.shape[2])
     xform_test = np.array(xform_test).reshape(test_feats.shape[0], test_feats.shape[1], test_feats.shape[2])
 

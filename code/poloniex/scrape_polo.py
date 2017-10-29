@@ -190,7 +190,6 @@ def remove_dupes(market='BTC_AMP'):
         print('no dupes, skipping...')
         return
 
-    dd_df = dd_df.drop_duplicates()  # one more time to be extra sure
     dd_df.sort_index(inplace=True)
     dd_df.to_hdf(datafile, 'data', mode='w', complib='blosc', complevel=9, format='table')
 
@@ -315,7 +314,7 @@ def save_trade_history(df, market, update):
     """
     filename = TRADE_DATA_DIR + market + '.hdf5'
     if update:
-        df.to_hdf(filename, 'data', mode='a', complib='blosc', complevel=9, format='table')
+        df.to_hdf(filename, 'data', mode='a', complib='blosc', complevel=9, format='table', append=True)
     else:
         df.to_hdf(filename, 'data', mode='w', complib='blosc', complevel=9, format='table')
 
@@ -334,7 +333,7 @@ def save_all_trade_history(two_h_delay=False):
 
     end = time.time()
 
-    print('done!  took', (end-start) // 60, 'seconds')
+    print('done!  took', int(end-start), 'seconds')
 
 
 def continuously_save_trade_history(interval=600):
