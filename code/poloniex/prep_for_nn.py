@@ -251,12 +251,11 @@ def prep_polo_nn(mkt='BTC_AMP', make_fresh=False, skip_load=False, save_scalers=
     return xform_train, xform_test, train_targs, test_targs
 
 
-def make_all_polo_nn_fulltrain(skip_load=True):
+def make_all_polo_nn_fulltrain(make_fresh=False, skip_load=True):
     pairs = get_btc_usdt_pairs()
-    start = pairs.index('BTC_ETH')
-    for p in pairs[start:]:
+    for p in pairs:
         print('making full train for', p)
-        _, _ = make_polo_nn_fulltrain(p, skip_load=skip_load)
+        _, _ = make_polo_nn_fulltrain(p, make_fresh=make_fresh, skip_load=skip_load)
 
 
 def make_polo_nn_fulltrain(mkt='BTC_AMP', make_fresh=False, skip_load=False):
@@ -278,7 +277,7 @@ def make_polo_nn_fulltrain(mkt='BTC_AMP', make_fresh=False, skip_load=False):
         rs_full = dp.resample_ohlc(df, resamp='H')
         rs_full = dp.make_mva_features(rs_full)
         bars = cts.create_tas(bars=rs_full, verbose=True)
-        # make target columns
+        # make target columns -- price change from 24 hours ago
         col = '24h_price_diff'
         bars[col] = bars['typical_price'].copy()
         bars[col] = np.hstack((np.repeat(bars[col].iloc[24], 24), bars['typical_price'].iloc[24:].values - bars['typical_price'].iloc[:-24].values))
@@ -305,15 +304,23 @@ def make_polo_nn_fulltrain(mkt='BTC_AMP', make_fresh=False, skip_load=False):
     return xform_train, train_targs
 
 
-def create_hist_feats(features, bars, hist_points=480):
+def create_hist_feats(features, bars, hist_points=480, future=24, make_all=False):
     # make historical features
     new_feats = []
-    for i in range(hist_points, features.shape[0]):
+    stop = features.shape[0] - future
+    if make_all:
+        stop += future
+
+    for i in range(hist_points, stop):
         new_feats.append(features[i - hist_points:i, :])
 
     new_feats = np.array(new_feats)
-    targets = bars['24h_price_diff_pct'].iloc[hist_points:].values
-    return new_feats, targets
+    if make_all:
+        targets = bars['24h_price_diff_pct'].iloc[hist_points + future:].values
+        return new_feats[:-future], targets, new_feats[-future:]
+    else:
+        targets = bars['24h_price_diff_pct'].iloc[hist_points + future:].values
+        return new_feats, targets
 
 
 def scale_historical_feats(new_feats, targets, test_size=5000, test_frac=0.2):
@@ -371,3 +378,31 @@ def scale_historical_feats_full(mkt, train_feats):
     pk.dump(scalers, open(sc_file, 'wb'))  # make sure to change this to read after copy-pasting!
 
     return xform_train
+
+
+def make_latest_nn_data(mkt='BTC_AMP', points=600):
+    """
+    grabs last x points and makes data for predictions
+    """
+    df = pe.read_trade_hist(mkt, points=points + 1024)  # add 1024 because we drop them
+    # resamples to the hour
+    rs_full = dp.resample_ohlc(df, resamp='H')
+    rs_full = dp.make_mva_features(rs_full)
+    bars = cts.create_tas(bars=rs_full, verbose=True)
+    # make target columns
+    col = '24h_price_diff'
+    bars[col] = bars['typical_price'].copy()
+    bars[col] = np.hstack((np.repeat(bars[col].iloc[24], 24), bars['typical_price'].iloc[24:].values - bars['typical_price'].iloc[:-24].values))
+    bars['24h_price_diff_pct'] = bars[col] / np.hstack((np.repeat(bars['typical_price'].iloc[24], 24), bars['typical_price'].iloc[24:].values))
+    # drop first 24 points because they are repeated
+    bars = bars.iloc[24:]
+    # also drop first 1000 points because usually they are bogus
+    bars = bars.iloc[1000:]
+
+    feat_cols = indicators + ['mva_tp_24_diff', 'direction_volume', 'volume']
+    features = bars[feat_cols].values
+
+    new_feats, train_targs = create_hist_feats(features, bars, hist_points=480)
+    xform_train = scale_historical_feats_full(mkt, new_feats)
+
+    return xform_train, train_targs, xform_new

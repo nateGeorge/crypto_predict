@@ -31,12 +31,18 @@ def read_orderbook(market='BTC_AMP'):
     return bdf, sdf
 
 
-def read_trade_hist(market='BTC_AMP', drop=0):
+def read_trade_hist(market='BTC_AMP', drop=0, points=None):
+    """
+    :param points: number of points load from the end
+    """
     datapath = HOME_DIR + 'data/trade_history/poloniex/'
     filename = datapath + market + '.hdf5'
     while True:
         try:
-            df = pd.read_hdf(filename, 'data')
+            if points is None:
+                df = pd.read_hdf(filename, 'data')
+            else:
+                df = pd.read_hdf(filename, 'data', start=-points)
             break
         except EOFError:
             print('EOFError, waiting 10s...')

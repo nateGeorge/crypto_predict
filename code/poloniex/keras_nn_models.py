@@ -113,6 +113,9 @@ def plot_results(mod, mkt, xform_train, train_targs, xform_test=None, test_targs
     train_score = mod.evaluate(xform_train.reshape(xform_train.shape[0], -1), train_targs)
     # couldn't figure this out yet
     # train_score = K.run(stock_loss_mae_log(train_targs, train_preds))
+    title = 'train preds vs actual (score = ' + str(train_score) + ')'
+    if xform_test is None:
+        title = 'full train preds vs actual (score = ' + str(train_score) + ')'
     data = [Scatter(x=train_preds,
                     y=train_targs,
                     mode='markers',
@@ -123,7 +126,7 @@ def plot_results(mod, mkt, xform_train, train_targs, xform_test=None, test_targs
                                 opacity=0.5)
                     )]
     layout = Layout(
-        title='full train preds vs actual (score = ' + str(train_score) + ')',
+        title=title,
         xaxis=dict(
             title='predictions'
         ),
@@ -248,12 +251,15 @@ def train_net(mkt, model, base='5_layer_dense', folder=None, batch_size=2000, te
 
     test_size = latest_size
 
+    val_frac = 0.15
     if latest_bias:
+        val_size = int(val_frac * train_targs.shape[0])
         train_eval = np.copy(xform_train)  # save original for evaluation
         train_eval_targs = np.copy(train_targs)
+        start = -(test_size + val_size)
         for i in range(bias_factor):
-            xform_train = np.vstack((xform_train, xform_train[-test_size:, :, :]))
-            train_targs = np.hstack((train_targs, train_targs[-test_size:]))
+            xform_train = np.vstack((xform_train, xform_train[start:-val_size, :, :]))
+            train_targs = np.hstack((train_targs, train_targs[start:-val_size]))
 
     latest_mod = get_latest_model(base=base, folder=folder)
     if latest_mod is None:
@@ -268,7 +274,7 @@ def train_net(mkt, model, base='5_layer_dense', folder=None, batch_size=2000, te
     history = mod.fit(xform_train.reshape(xform_train.shape[0], -1),
                     train_targs,
                     epochs=200,
-                    validation_split=0.15,
+                    validation_split=val_frac,
                     callbacks=cb,
                     batch_size=batch_size)
 
@@ -276,8 +282,12 @@ def train_net(mkt, model, base='5_layer_dense', folder=None, batch_size=2000, te
     print('saving as', model_file)
     sk.save_network(mod, model_file)
 
-    plot_results(mod, mkt, train_eval, train_eval_targs, xform_test, test_targs, folder=folder)
-    best = get_best_thresh(mod, xform_train, train_targs, cln=False)
+    if latest_bias:
+        plot_results(mod, mkt, train_eval, train_eval_targs, xform_test, test_targs, folder=folder)
+        best = get_best_thresh(mod, train_eval, train_eval_targs, cln=False)
+    else:
+        plot_results(mod, mkt, xform_train, train_targs, xform_test, test_targs, folder=folder)
+        best = get_best_thresh(mod, xform_train, train_targs, cln=False)
 
     del history
     gc.collect()
@@ -298,8 +308,7 @@ def train_all_pairs(test=True, latest_bias=False):
     pairs = get_btc_usdt_pairs()
     best_threshes = {'market': [], 'threshold': []}
     pairs = get_btc_usdt_pairs()
-    start = pairs.index('BTC_')
-    for p in pairs[start:]:
+    for p in pairs:
         print('\n'*3)
         print('training on', p)
         batch_size = 1000
@@ -372,16 +381,16 @@ def big_dense(train_feats):
     inputs = Input(shape=(timesteps*input_dim, ))  # timesteps, input_dim
     x = Dense(3000, activation='elu')(inputs)
     x = BatchNormalization()(x)
-    x = Dropout(0.2)(x)
+    x = Dropout(0.6)(x)
     x = Dense(2000, activation='elu')(x)
     x = BatchNormalization()(x)
-    x = Dropout(0.2)(x)
+    x = Dropout(0.6)(x)
     x = Dense(1000, activation='elu')(x)
     x = BatchNormalization()(x)
-    x = Dropout(0.2)(x)
+    x = Dropout(0.5)(x)
     x = Dense(500, activation='elu')(x)
     x = BatchNormalization()(x)
-    x = Dropout(0.2)(x)
+    x = Dropout(0.5)(x)
     x = Dense(100, activation='elu')(x)
     x = BatchNormalization()(x)
     x = Dense(1, activation='linear')(x)
@@ -485,6 +494,9 @@ def find_all_best(make_plots=False):
 
 
 if __name__ == "__main__":
+    train_all_pairs(test=True, latest_bias=True)
+    train_all_pairs(test=False, latest_bias=True)
+
     pass
     #
     # train_all_pairs(test=False, latest_bias=True)
