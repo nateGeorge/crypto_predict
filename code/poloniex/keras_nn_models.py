@@ -17,7 +17,7 @@ import save_keras as sk
 from utils import get_home_dir
 
 # installed
-from keras.layers import Input, Dense, Dropout, BatchNormalization, LSTM, RepeatVector
+from keras.layers import Input, Dense, Dropout, BatchNormalization, LSTM, RepeatVector, Conv1D, MaxPooling1D, Activation, Flatten
 from keras.models import Model, load_model
 from keras.callbacks import EarlyStopping
 from keras.regularizers import l1_l2
@@ -220,7 +220,7 @@ def compress_all_models():
         reset_collect()
 
 
-def train_net(mkt, model, base='5_layer_dense', folder=None, batch_size=2000, test=True, latest_bias=False, bias_factor=4, latest_size=3000):
+def train_net(mkt, model, base='5_layer_dense', folder=None, batch_size=2000, test=True, latest_bias=False, bias_factor=4, latest_size=3000, random_init=False):
     """
     trains model on a given market, saves 5k or 20% for testing
 
@@ -238,7 +238,13 @@ def train_net(mkt, model, base='5_layer_dense', folder=None, batch_size=2000, te
     """
     if test:
         xform_train, xform_test, train_targs, test_targs = pfn.prep_polo_nn(mkt=mkt)
-        test_size = xform_test.shape
+        if xform_train is None:
+            return None, None
+
+        if xform_test is None:
+            test_size = int(xform_train.shape[0] / 5)
+        else:
+            test_size = xform_test.shape
     else:
         xform_train, train_targs = pfn.make_polo_nn_fulltrain(mkt=mkt)
         xform_test, test_targs = None, None
@@ -261,7 +267,11 @@ def train_net(mkt, model, base='5_layer_dense', folder=None, batch_size=2000, te
             xform_train = np.vstack((xform_train, xform_train[start:-val_size, :, :]))
             train_targs = np.hstack((train_targs, train_targs[start:-val_size]))
 
-    latest_mod = get_latest_model(base=base, folder=folder)
+    if random_init:
+        latest_mod = None
+    else:
+        latest_mod = get_latest_model(base=base, folder=folder)
+
     if latest_mod is None:
         mod = getattr(thismodule, model)(xform_train)
     else:
@@ -271,7 +281,12 @@ def train_net(mkt, model, base='5_layer_dense', folder=None, batch_size=2000, te
     es = EarlyStopping(monitor='val_loss', min_delta=0, patience=12, verbose=0, mode='auto')
     cb = [es]
 
-    history = mod.fit(xform_train.reshape(xform_train.shape[0], -1),
+    if model in ['big_dense']:
+        train = xform_train.reshape(xform_train.shape[0], -1)
+    elif model in ['big_conv1']:
+        train = xform_train
+
+    history = mod.fit(train,
                     train_targs,
                     epochs=200,
                     validation_split=val_frac,
@@ -308,16 +323,19 @@ def train_all_pairs(test=True, latest_bias=False):
     pairs = get_btc_usdt_pairs()
     best_threshes = {'market': [], 'threshold': []}
     pairs = get_btc_usdt_pairs()
-    for p in pairs:
+    # added to start with random weights on first one
+    start = pairs.index('BTC_BCH')
+    for p in pairs[start:]:
         print('\n'*3)
         print('training on', p)
         batch_size = 1000
         mod, best = train_net(p,
-                            'big_dense',
+                            'big_dense',  # model function name
                             batch_size=batch_size,
                             test=test,
                             latest_bias=latest_bias,
-                            folder=folder)
+                            folder=folder,
+                            random_init=random_init)
         if mod is None:
             continue
 
@@ -336,8 +354,18 @@ def train_all_pairs(test=True, latest_bias=False):
     df.to_hdf(thresh_file, 'data', mode='w', complib='blosc', complevel=9)
 
 
-def train_on_pair(mkt):
-    mod = train_net(mkt, 'big_dense', base='5_layer_dense')
+def train_on_one(mkt, model, test=True, latest_bias=True, folder=None, random_init=False):
+    batch_size = 1000
+    mod, best = train_net(mkt,
+                        model,
+                        base=model,
+                        batch_size=batch_size,
+                        test=test,
+                        latest_bias=latest_bias,
+                        folder=folder,
+                        random_init=random_init)
+
+    return mod, best
 
 
 def stock_loss_mae_log(y_true, y_pred):
@@ -370,6 +398,9 @@ def big_dense(train_feats):
     """
     creates big dense model
 
+    need to reshape input data like:
+        train_feats.reshape(train_feats.shape[0], -1)
+
     by default loads weights from latest trained model on BTC_STR I think
     """
     # restart keras session (clear weights)
@@ -378,7 +409,7 @@ def big_dense(train_feats):
 
     timesteps = train_feats.shape[1]
     input_dim = train_feats.shape[2]
-    inputs = Input(shape=(timesteps*input_dim, ))  # timesteps, input_dim
+    inputs = Input(shape=(timesteps*input_dim, ))
     x = Dense(3000, activation='elu')(inputs)
     x = BatchNormalization()(x)
     x = Dropout(0.6)(x)
@@ -396,6 +427,60 @@ def big_dense(train_feats):
     x = Dense(1, activation='linear')(x)
 
     mod = Model(inputs, x)
+    mod.compile(optimizer='adam', loss=stock_loss_mae_log)
+
+    return mod
+
+
+def big_conv1(train_feats):
+    """
+    creates big convolutional model
+    """
+    # restart keras session (clear weights)
+    K.clear_session()
+    tf.reset_default_graph()
+
+    timesteps = train_feats.shape[1]
+    input_dim = train_feats.shape[2]
+    inputs = Input(shape=(timesteps, input_dim))
+    x = Conv1D(filters=16, kernel_size=5, strides=1, kernel_initializer='glorot_normal')(inputs)
+    x = BatchNormalization()(x)
+    x = MaxPooling1D()(x) # 2 x 2 : kernel x strides
+    x = Activation('elu')(x)
+
+    x = Conv1D(filters=32, kernel_size=5, strides=1, kernel_initializer='glorot_normal')(x)
+    x = BatchNormalization()(x)
+    x = MaxPooling1D()(x) # 2 x 2 : kernel x strides
+    x = Activation('elu')(x)
+
+    x = Conv1D(filters=64, kernel_size=5, strides=1, kernel_initializer='glorot_normal')(x)
+    x = BatchNormalization()(x)
+    x = MaxPooling1D()(x) # 2 x 2 : kernel x strides
+    x = Activation('elu')(x)
+
+    x = Conv1D(filters=128, kernel_size=5, strides=1, kernel_initializer='glorot_normal')(x)
+    x = BatchNormalization()(x)
+    x = MaxPooling1D()(x) # 2 x 2 : kernel x strides
+    x = Activation('elu')(x)
+
+    x = Flatten()(x)
+    x = Dense(3000, activation='elu')(x)
+    x = BatchNormalization()(x)
+    x = Dropout(0.6)(x)
+    x = Dense(2000, activation='elu')(x)
+    x = BatchNormalization()(x)
+    x = Dropout(0.6)(x)
+    x = Dense(1000, activation='elu')(x)
+    x = BatchNormalization()(x)
+    x = Dropout(0.5)(x)
+    x = Dense(500, activation='elu')(x)
+    x = BatchNormalization()(x)
+    x = Dropout(0.5)(x)
+    x = Dense(100, activation='elu')(x)
+    x = BatchNormalization()(x)
+    output = Dense(1, activation='linear')(x)
+
+    mod = Model(inputs, output)
     mod.compile(optimizer='adam', loss=stock_loss_mae_log)
 
     return mod
@@ -494,8 +579,9 @@ def find_all_best(make_plots=False):
 
 
 if __name__ == "__main__":
-    train_all_pairs(test=True, latest_bias=True)
-    train_all_pairs(test=False, latest_bias=True)
+    mod, best = train_on_one('BTC_AMP', 'big_conv1', random_init=True)
+    # train_all_pairs(test=True, latest_bias=True)
+    # train_all_pairs(test=False, latest_bias=True)
 
     pass
     #
