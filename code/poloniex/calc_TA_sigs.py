@@ -5,11 +5,6 @@ import matplotlib.pyplot as plt
 
 def create_tas(df=None, bars=None, verbose=False):
     """
-    :param col: the column to use for creating TAs
-
-    idea for future: instead of just one col for the calcs, use
-    close and typical price ([close + high + low] / 3)
-
     list of currently applied indicators:
     ['bband_u_cl', # bollinger bands
      'bband_m_cl',
