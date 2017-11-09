@@ -6,6 +6,7 @@ meant to be run from the home code dir
 # core
 import os
 import sys
+import gc
 
 # custom
 sys.path.append('code')
@@ -22,6 +23,10 @@ import h5py
 import numpy as np
 from poloniex import Poloniex
 import pickle as pk
+from multiprocessing import Pool
+from plotly import tools
+import plotly.graph_objs as go
+from plotly.offline import plot
 
 key = os.environ.get('polo_key')
 sec = os.environ.get('polo_sec')
@@ -181,7 +186,7 @@ def get_btc_usdt_pairs():
     return pairs
 
 
-def make_all_nn_data(make_fresh=False, skip_load=True, save_scalers=False):
+def make_all_nn_data(future, hist_points, resamp, make_fresh=False, skip_load=True, save_scalers=False):
     ticks = polo.returnTicker()
     pairs = sorted(ticks.keys())
     # for now, just care about BTC and USDT
@@ -190,19 +195,25 @@ def make_all_nn_data(make_fresh=False, skip_load=True, save_scalers=False):
     pairs = btc_pairs + usdt_pairs
     for c in pairs:
         print('making data for', c)
-        _, _, _, _ = prep_polo_nn(mkt=c, make_fresh=make_fresh, skip_load=skip_load, save_scalers=save_scalers)
+        _, _, _, _ = prep_polo_nn(mkt=c,
+                                    make_fresh=make_fresh,
+                                    skip_load=skip_load,
+                                    save_scalers=save_scalers,
+                                    future=future,
+                                    hist_points=hist_points,
+                                    resamp=resamp)
 
 
-def prep_polo_nn(mkt='BTC_AMP', make_fresh=False, skip_load=False, save_scalers=False):
+def prep_polo_nn(mkt='BTC_AMP', make_fresh=False, skip_load=False, save_scalers=False, future=24, hist_points=480, resamp='H'):
     """
-    right now this is predicting 24h into the future.  need to make future time arbitrary
     :param mkt: string, market pair to use
     :param make_fresh: creates new files even if they exist
     :param skip_load: if files already exist, just returns all Nones
     :param save_scalers: will save the StandardScalers used.  necessary to do
                         live predictions
     """
-    datafile = home_dir + 'data/nn_feats_targs/poloniex/' + mkt
+    datafile = make_filename(mkt, future, resamp, hist_points)
+    print('filename:', datafile)
     if os.path.exists(datafile) and not make_fresh:
         if skip_load:
             print('files exist, skipping')
@@ -210,45 +221,68 @@ def prep_polo_nn(mkt='BTC_AMP', make_fresh=False, skip_load=False, save_scalers=
 
         print('loading...')
         f = h5py.File(datafile, 'r')
-        xform_train = f['xform_train'][:]
-        xform_test = f['xform_test'][:]
+        train_feats = f['xform_train'][:]
+        test_feats = f['xform_test'][:]
         train_targs = f['train_targs'][:]
         test_targs = f['test_targs'][:]
+        dates = f['dates'][:]
         f.close()
     else:
         print('creating new...')
         df = pe.read_trade_hist(mkt)
-        # resamples to the hour
-        rs_full = dp.resample_ohlc(df, resamp='H')
+        # resamples to the hour if H, T is for minutes, S is seconds
+        rs_full = dp.resample_ohlc(df, resamp=resamp)
+        del df
+        gc.collect()
         rs_full = dp.make_mva_features(rs_full)
         bars = cts.create_tas(bars=rs_full, verbose=True)
+        del rs_full
+        gc.collect()
         # make target columns
-        col = '24h_price_diff'
+        col = str(future) + '_' + resamp + '_price_diff'
         bars[col] = bars['typical_price'].copy()
-        bars[col] = np.hstack((np.repeat(bars[col].iloc[24], 24), bars['typical_price'].iloc[24:].values - bars['typical_price'].iloc[:-24].values))
-        bars['24h_price_diff_pct'] = bars[col] / np.hstack((np.repeat(bars['typical_price'].iloc[24], 24), bars['typical_price'].iloc[24:].values))
-        # drop first 24 points because they are repeated
-        bars = bars.iloc[24:]
+        bars[col] = np.hstack((np.repeat(bars[col].iloc[future], future), bars['typical_price'].iloc[future:].values - bars['typical_price'].iloc[:-future].values))
+        bars[str(future) + '_' + resamp + '_price_diff_pct'] = bars[col] / np.hstack((np.repeat(bars['typical_price'].iloc[future], future), bars['typical_price'].iloc[:-future].values))
+        # drop first 'future' points because they are repeated
         # also drop first 1000 points because usually they are bogus
-        bars = bars.iloc[1000:]
+        bars = bars.iloc[future + 1000:]
+        dates = list(map(lambda x: x.value, bars.index))  # in microseconds since epoch
         if bars.shape[0] < 1000:
             print('less than 1000 points, skipping...')
             return None, None, None, None
 
-        feat_cols = indicators + ['mva_tp_24_diff', 'direction_volume', 'volume']
+        feat_cols = indicators + ['mva_tp_24_diff', 'direction_volume', 'volume', 'high', 'low', 'close', 'open']
         features = bars[feat_cols].values
+        targets = bars[str(future) + '_' + resamp + '_price_diff_pct'].values
+        del bars
+        gc.collect()
 
-        new_feats, targets = create_hist_feats(features, bars, hist_points=480)
-        xform_train, xform_test, train_targs, test_targs = scale_historical_feats(new_feats, targets, test_size=5000)
+        new_feats, targets, dates = create_hist_feats(features, targets, dates, hist_points=hist_points, future=future)
+        test_size=5000
+        test_frac=0.2
+        scale_historical_feats(new_feats)  # does scaling in-place, no returned values
+        # in case dataset is too small for 5k test points, adjust according to test_frac
+        if new_feats.shape[0] * test_frac < test_size:
+            test_size = int(new_feats.shape[0] * test_frac)
+
+        train_feats = new_feats[:-test_size]
+        train_targs = targets[:-test_size]
+        test_feats = new_feats[-test_size:]
+        test_targs = targets[-test_size:]
+
+        # del targets
+        # del new_feats
+        # gc.collect()
 
         f = h5py.File(datafile, 'w')
-        f.create_dataset('xform_train', data=xform_train, compression='lzf')
-        f.create_dataset('xform_test', data=xform_test, compression='lzf')
+        f.create_dataset('xform_train', data=train_feats, compression='lzf')
+        f.create_dataset('xform_test', data=test_feats, compression='lzf')
         f.create_dataset('train_targs', data=train_targs, compression='lzf')
         f.create_dataset('test_targs', data=test_targs, compression='lzf')
+        f.create_dataset('dates', data=dates, compression='lzf')
         f.close()
 
-    return xform_train, xform_test, train_targs, test_targs
+    return train_feats, test_feats, train_targs, test_targs, dates
 
 
 def make_all_polo_nn_fulltrain(make_fresh=False, skip_load=True):
@@ -258,8 +292,16 @@ def make_all_polo_nn_fulltrain(make_fresh=False, skip_load=True):
         _, _ = make_polo_nn_fulltrain(p, make_fresh=make_fresh, skip_load=skip_load)
 
 
-def make_polo_nn_fulltrain(mkt='BTC_AMP', make_fresh=False, skip_load=False):
-    datafile = home_dir + 'data/nn_feats_targs/poloniex/full_train_' + mkt
+def make_filename(mkt, future, resamp, hist_points, full_train=False):
+    if full_train:
+        return home_dir + 'data/nn_feats_targs/poloniex/full_train_' + '_'.join([mkt, resamp, 'h=' + str(hist_points), 'f=' + str(future)])
+
+    return home_dir + 'data/nn_feats_targs/poloniex/' + '_'.join([mkt, resamp, 'h=' + str(hist_points), 'f=' + str(future)])
+
+
+def make_polo_nn_fulltrain(mkt='BTC_AMP', make_fresh=False, skip_load=False, hist_points=480, future=24, resamp='5T'):
+    datafile = make_filename(mkt, future, resamp, hist_points, full_train=True)
+    print('filename:', datafile)
     if os.path.exists(datafile) and not make_fresh:
         if skip_load:
             print('skipping...')
@@ -278,23 +320,28 @@ def make_polo_nn_fulltrain(mkt='BTC_AMP', make_fresh=False, skip_load=False):
         rs_full = dp.make_mva_features(rs_full)
         bars = cts.create_tas(bars=rs_full, verbose=True)
         # make target columns -- price change from 24 hours ago
-        col = '24h_price_diff'
+        col = str(future) + '_' + resamp + '_price_diff'
         bars[col] = bars['typical_price'].copy()
-        bars[col] = np.hstack((np.repeat(bars[col].iloc[24], 24), bars['typical_price'].iloc[24:].values - bars['typical_price'].iloc[:-24].values))
-        bars['24h_price_diff_pct'] = bars[col] / np.hstack((np.repeat(bars['typical_price'].iloc[24], 24), bars['typical_price'].iloc[24:].values))
+        bars[col] = np.hstack((np.repeat(bars[col].iloc[future], future), bars['typical_price'].iloc[future:].values - bars['typical_price'].iloc[:-future].values))
+        bars[str(future) + '_' + resamp + '_price_diff_pct'] = bars[col] / np.hstack((np.repeat(bars['typical_price'].iloc[future], future), bars['typical_price'].iloc[future:].values))
         # drop first 24 points because they are repeated
-        bars = bars.iloc[24:]
+        bars = bars.iloc[future:]
         # also drop first 1000 points because usually they are bogus
         bars = bars.iloc[1000:]
         if bars.shape[0] < 1000:
             print('less than 1000 points, skipping...')
             return None, None
 
-        feat_cols = indicators + ['mva_tp_24_diff', 'direction_volume', 'volume']
+        feat_cols = indicators + ['mva_tp_24_diff', 'direction_volume', 'volume', 'high', 'low', 'close', 'open']
         features = bars[feat_cols].values
+        targets = bars[str(future) + 'h_price_diff_pct'].values
+        del bars
+        gc.collect()
 
-        new_feats, train_targs = create_hist_feats(features, bars, hist_points=480)
+        new_feats, train_targs = create_hist_feats(features, targets, hist_points=hist_points, future=future)
         xform_train = scale_historical_feats_full(mkt, new_feats)
+        del new_feats
+        gc.collect()
 
         f = h5py.File(datafile, 'w')
         f.create_dataset('xform_train', data=xform_train, compression='lzf')
@@ -304,7 +351,7 @@ def make_polo_nn_fulltrain(mkt='BTC_AMP', make_fresh=False, skip_load=False):
     return xform_train, train_targs
 
 
-def create_hist_feats(features, bars, hist_points=480, future=24, make_all=False):
+def create_hist_feats(features, targets, dates, hist_points=480, future=24, make_all=False):
     # make historical features
     new_feats = []
     stop = features.shape[0] - future
@@ -316,16 +363,47 @@ def create_hist_feats(features, bars, hist_points=480, future=24, make_all=False
 
     new_feats = np.array(new_feats)
     if make_all:
-        targets = bars['24h_price_diff_pct'].iloc[hist_points + future:].values
+        new_targs = targets[hist_points + future:]
         return new_feats[:-future], targets, new_feats[-future:]
     else:
-        targets = bars['24h_price_diff_pct'].iloc[hist_points + future:].values
-        return new_feats, targets
+        new_targs = targets[hist_points + future:]
+        dates = dates[hist_points + future:]  # dates for the targets
+        return new_feats, new_targs, dates
 
 
-def scale_historical_feats(new_feats, targets, test_size=5000, test_frac=0.2):
+def scale_it(dat):
+    sh0, sh2 = dat.shape[0], dat.shape[2]
+    s = SS(copy=False)  # copy=False does the scaling inplace, so we don't have to make a new list
+    for j in tqdm(range(sh0)):  # timesteps
+        for i in range(sh2):  # number of indicators/etc
+            _ = s.fit_transform(dat[j, :, i].reshape(-1, 1))[:, 0]
+
+
+def scale_historical_feats(feats, multiproc=False):
+    # TODO: multithread so it runs faster
+    if multiproc:
+        cores = os.cpu_count()
+
+        chunksize = feats.shape[0] // (cores)
+        chunks = np.split(feats[:chunksize * (cores - 1), :, :], cores - 1)
+        print(len(chunks))
+        print(feats[np.newaxis, chunksize * (cores - 1):, :, :].shape)
+        print(chunks[0].shape)
+        # chunks = np.concatenate([chunks, feats[np.newaxis, chunksize * (cores - 1):, :, :]])
+
+        pool = Pool()
+        pool.map(scale_it, chunks + [feats[np.newaxis, chunksize * (cores - 1):, :, :]])
+        pool.close()
+        pool.join()
+    else:
+        scale_it(feats)
+
+
+def scale_historical_feats_old(new_feats, targets, test_size=5000, test_frac=0.2):
     # also makes train/test
     # in case dataset is too small for 5k test points, adjust according to test_frac
+
+    # TODO: multithread so it runs faster
     if new_feats.shape[0] * test_frac < test_size:
         test_size = int(new_feats.shape[0] * test_frac)
 
@@ -334,75 +412,117 @@ def scale_historical_feats(new_feats, targets, test_size=5000, test_frac=0.2):
     test_feats = new_feats[-test_size:]
     test_targs = targets[-test_size:]
 
-    xform_train = []
-    xform_test = []
-    s = SS()
-    for j in tqdm(range(train_feats.shape[0])):  # timesteps
-        xform_train_ts = []
-        for i in range(train_feats.shape[2]):  # number of indicators/etc
-            xform_train_ts.append(s.fit_transform(train_feats[j, :, i].reshape(-1, 1))[:, 0])
+    tr_sh0, tr_sh1, tr_sh2 = train_feats.shape[0], train_feats.shape[1], train_feats.shape[2]
+    te_sh0, te_sh1, te_sh2 = test_feats.shape[0], test_feats.shape[1], test_feats.shape[2]
 
-        xform_train_ts = np.array(xform_train_ts).reshape(train_feats.shape[1], train_feats.shape[2])
-        xform_train.append(xform_train_ts)
+    s = SS(copy=False)  # copy=False does the scaling inplace, so we don't have to make a new list
+    for j in tqdm(range(tr_sh0)):  # timesteps
+        for i in range(tr_sh2):  # number of indicators/etc
+            _ = s.fit_transform(train_feats[j, :, i].reshape(-1, 1))[:, 0]
 
-    for j in tqdm(range(test_feats.shape[0])):
-        xform_test_ts = []
-        for i in range(test_feats.shape[2]):  # number of indicators/etc
-            xform_test_ts.append(s.fit_transform(test_feats[j, :, i].reshape(-1, 1))[:, 0])
+    del train_feats
+    gc.collect()
 
-        xform_test_ts = np.array(xform_test_ts).reshape(test_feats.shape[1], test_feats.shape[2])
-        xform_test.append(xform_test_ts)
+    for j in tqdm(range(te_sh0)):
+        for i in range(te_sh2):  # number of indicators/etc
+            _ = s.fit_transform(test_feats[j, :, i].reshape(-1, 1))[:, 0]
 
-    print(train_feats.shape[0])
-    xform_train = np.array(xform_train).reshape(train_feats.shape[0], train_feats.shape[1], train_feats.shape[2])
-    xform_test = np.array(xform_test).reshape(test_feats.shape[0], test_feats.shape[1], test_feats.shape[2])
-
-    return xform_train, xform_test, train_targs, test_targs
+    return train_feats, test_feats, train_targs, test_targs
 
 
 def scale_historical_feats_full(mkt, train_feats):
-    xform_train = []
-    scalers = [SS() for i in range(train_feats.shape[2])]
+    # dont think we need to even save the scalers...normalizing evenything regardless
+    scalers = [SS(copy=False) for i in range(train_feats.shape[2])]
     for j in tqdm(range(train_feats.shape[0])):  # timesteps
-        xform_train_ts = []
         for i in range(train_feats.shape[2]):  # number of indicators/etc
-            xform_train_ts.append(scalers[i].fit_transform(train_feats[j, :, i].reshape(-1, 1))[:, 0])
-
-        xform_train_ts = np.array(xform_train_ts).reshape(train_feats.shape[1], train_feats.shape[2])
-        xform_train.append(xform_train_ts)
-
-    print(train_feats.shape[0])
-    xform_train = np.array(xform_train).reshape(train_feats.shape[0], train_feats.shape[1], train_feats.shape[2])
+            _ = scalers[i].fit_transform(train_feats[j, :, i].reshape(-1, 1))[:, 0]
 
     sc_file = home_dir + 'data/nn_feats_targs/poloniex/full_train_' + mkt + '_scalers.pk'
     pk.dump(scalers, open(sc_file, 'wb'))  # make sure to change this to read after copy-pasting!
+    # don't need to return anything because it does it in-place
 
-    return xform_train
 
-
-def make_latest_nn_data(mkt='BTC_AMP', points=600):
+def make_latest_nn_data(mkt='BTC_AMP', points=600, future=24, hist_points=480, resamp='H'):
     """
     grabs last x points and makes data for predictions
     """
-    df = pe.read_trade_hist(mkt, points=points + 1024)  # add 1024 because we drop them
+    df = pe.read_trade_hist(mkt, points=points + future)  # add 'future' points because we drop them
     # resamples to the hour
-    rs_full = dp.resample_ohlc(df, resamp='H')
+    rs_full = dp.resample_ohlc(df, resamp=resamp)
     rs_full = dp.make_mva_features(rs_full)
     bars = cts.create_tas(bars=rs_full, verbose=True)
     # make target columns
-    col = '24h_price_diff'
+    col = str(future) + '_' + resamp + '_price_diff'
     bars[col] = bars['typical_price'].copy()
-    bars[col] = np.hstack((np.repeat(bars[col].iloc[24], 24), bars['typical_price'].iloc[24:].values - bars['typical_price'].iloc[:-24].values))
-    bars['24h_price_diff_pct'] = bars[col] / np.hstack((np.repeat(bars['typical_price'].iloc[24], 24), bars['typical_price'].iloc[24:].values))
+    bars[col] = np.hstack((np.repeat(bars[col].iloc[future], future), bars['typical_price'].iloc[future:].values - bars['typical_price'].iloc[:-future].values))
+    bars[str(future) + '_' + resamp + '_price_diff_pct'] = bars[col] / np.hstack((np.repeat(bars['typical_price'].iloc[future], future), bars['typical_price'].iloc[future:].values))
     # drop first 24 points because they are repeated
-    bars = bars.iloc[24:]
-    # also drop first 1000 points because usually they are bogus
-    bars = bars.iloc[1000:]
+    bars = bars.iloc[future:]
 
-    feat_cols = indicators + ['mva_tp_24_diff', 'direction_volume', 'volume']
+    feat_cols = indicators + ['mva_tp_24_diff', 'direction_volume', 'volume', 'high', 'low', 'close', 'open']
     features = bars[feat_cols].values
+    targets = bars[str(future) + 'h_price_diff_pct'].values
 
-    new_feats, train_targs = create_hist_feats(features, bars, hist_points=480)
+    del bars
+    gc.collect()
+
+    new_feats, train_targs = create_hist_feats(features, targets, hist_points=hist_points, future=future)
     xform_train = scale_historical_feats_full(mkt, new_feats)
+    del new_feats
+    gc.collect()
 
-    return xform_train, train_targs, xform_new
+    return xform_train, train_targs
+
+
+# TODO: plot % change with actual data to make sure they agree
+import pandas as pd
+mkt = 'BTC_AMP'
+future = 6
+hist_points = 72
+df = pe.read_trade_hist(mkt)
+# resamples to the hour if H, T is for minutes, S is seconds
+rs_full = dp.resample_ohlc(df, resamp='H')
+xform_train, xform_test, train_targs, test_targs, dates = prep_polo_nn(mkt, make_fresh=True, hist_points=hist_points, future=future, resamp='H')
+all_targs = np.concatenate((train_targs, test_targs))
+# drop 1000 + future in main prep_polo_nn, then get hist_points + future from create_hist_feats
+rs_abbrev = rs_full.iloc[1000 + future * 2 + hist_points:]
+
+print(rs_abbrev.index[-1])
+print(pd.to_datetime(dates[-1]))
+
+trace1 = go.Scatter(
+    x=rs_abbrev.index,
+    y=rs_abbrev['typical_price']
+)
+trace2 = go.Scatter(
+    x=rs_abbrev.index,
+    y=all_targs,
+)
+
+fig = tools.make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.001)
+
+fig.append_trace(trace1, 1, 1)
+fig.append_trace(trace2, 2, 1)
+
+fig['layout'].update(height=1500, width=1500)
+plot(fig, filename='simple-subplot')
+
+
+
+# make_all_nn_data(future=6, hist_points=72, resamp='H', make_fresh=True)
+
+# 3 hours in past and 6 hours in future with 5 min bins
+# xform_train, xform_test, train_targs, test_targs = prep_polo_nn('BTC_ETH', make_fresh=True, hist_points=216, future=72, resamp='5T')
+# xform_train, xform_test, train_targs, test_targs = prep_polo_nn('USDT_LTC', make_fresh=True, hist_points=216, future=72, resamp='5T')
+# for returning early and testing stuff
+# nf, t = prep_polo_nn('USDT_LTC', make_fresh=True, hist_points=216, future=72, resamp='5T')
+# xform_train, xform_test, train_targs, test_targs = prep_polo_nn('USDT_BTC', make_fresh=True, hist_points=216, future=72, resamp='5T')
+
+
+# make = ['USDT_LTC', 'USDT_XRP', 'BTC_XRP', 'BTC_ETH', 'BTC_LTC']
+# for m in make:
+#     _, _, _, _ = prep_polo_nn(m, make_fresh=True, hist_points=72, future=6, resamp='H')
+
+# _, _, _, _ = prep_polo_nn('BTC_DASH', make_fresh=True, hist_points=72, future=6, resamp='H')
+# xform_train, xform_test, train_targs, test_targs = prep_polo_nn('USDT_BTC', make_fresh=True, hist_points=72, future=6, resamp='H')
+# make_all_nn_data(future=6, hist_points=72, resamp='H', make_fresh=False, skip_load=True, save_scalers=False)
