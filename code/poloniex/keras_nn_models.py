@@ -242,7 +242,17 @@ def parse_deets(deets):
         return int(d[0]), int(d[1]), d[2]
 
 
-def train_net(mkt, model, deets=None, base='5_layer_dense', folder=None, batch_size=2000, test=True, latest_bias=False, bias_factor=4, latest_size=3000, random_init=False):
+def train_net(mkt,
+                model,
+                deets=None,
+                base='5_layer_dense',
+                folder=None,
+                batch_size=2000,
+                test=True,
+                latest_bias=False,
+                bias_factor=4,
+                latest_size=3000,
+                random_init=False):
     """
     trains model on a given market, saves 5k or 20% for testing
 
