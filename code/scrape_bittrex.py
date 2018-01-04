@@ -29,7 +29,7 @@ def get_all_currency_pairs(show_mkts=False):
                 print(m['MarketName'])
             market_names.append(m['MarketName'])
 
-        return market_names
+        return sorted(market_names)
     else:
         print('error! ', res.json()['message'])
         return None
