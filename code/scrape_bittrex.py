@@ -1,10 +1,35 @@
+# core
 import os
-import requests
+import re
 import time
 from datetime import datetime
-import pandas as pd
-import re
 from threading import Thread
+
+# installed
+import pandas as pd
+import requests
+import psycopg2 as pg
+from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+
+PG_PASS = os.environ.get('pg_ps')
+TH_DB = 'bittrex'
+# create db if not already there
+# check if db exists
+try:
+    conn = pg.connect(dbname=TH_DB, user='nate', password=PG_PASS)
+except pg.OperationalError:
+    conn = pg.connect(dbname='postgres', user='nate', password=PG_PASS)
+    conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+    cur = conn.cursor()
+    cur.execute('CREATE DATABASE ' + TH_DB)
+    cur.close()
+    conn.close()
+    conn = pg.connect(dbname=TH_DB, user='nate', password=PG_PASS)
+
+# gets list of all tables
+cursor = conn.cursor()
+cursor.execute("select relname from pg_class where relkind='r' and relname !~ '^(pg_|sql_)';")
+print(cursor.fetchall())
 
 
 def get_home_dir():
@@ -20,7 +45,13 @@ def get_home_dir():
 
 
 def get_all_currency_pairs(show_mkts=False):
-    res = requests.get('https://bittrex.com/api/v1.1/public/getmarkets')
+    while True:  # in case of ssl error
+        try:
+            res = requests.get('https://bittrex.com/api/v1.1/public/getmarkets')
+            break
+        except:
+            time.sleep(10)
+
     if res.json()['success']:
         markets = res.json()['result']
         market_names = []
@@ -35,12 +66,18 @@ def get_all_currency_pairs(show_mkts=False):
         return None
 
 
-HOME_DIR = get_home_dir()
+HOME_DIR = '/media/nate/data_lake/crytpo_predict/'#get_home_dir()
 MARKETS = get_all_currency_pairs()
 
 
 def get_all_summaries():
-    res = requests.get('https://bittrex.com/api/v1.1/public/getmarketsummaries')
+    while True:  # just in case of SSL error
+        try:
+            res = requests.get('https://bittrex.com/api/v1.1/public/getmarketsummaries')
+            break
+        except:
+            time.sleep(10)
+
     if res.json()['success']:
         summary = res.json()['result']
         return summary
@@ -52,7 +89,13 @@ def get_all_summaries():
 def get_all_tickers():
     tickers = []
     for m in MARKETS:
-        res = requests.get('https://bittrex.com/api/v1.1/public/getticker?market=' + m)
+        while True:
+            try:
+                res = requests.get('https://bittrex.com/api/v1.1/public/getticker?market=' + m)
+                break
+            except:
+                time.sleep(10)
+
         if res.json()['success']:
             t = res.json()['result']
             if t is None:
@@ -70,7 +113,13 @@ def get_all_tickers():
 
 
 def get_trade_history(market):
-    res = requests.get('https://bittrex.com/api/v1.1/public/getmarkethistory?market=' + market)
+    while True:  # sometimes an SSL connection error...just wait a few seconds and try again
+        try:
+            res = requests.get('https://bittrex.com/api/v1.1/public/getmarkethistory?market=' + market)
+            break
+        except:
+            time.sleep(10)
+
     try:
         if res.json()['success']:
             history = res.json()['result']
@@ -83,7 +132,10 @@ def get_trade_history(market):
         return None
 
 
-def save_all_trade_history():
+def save_all_trade_history_old():
+    """
+    saves data to CSVs...pretty inefficient
+    """
     for m in MARKETS:
         print('saving', m, 'trade history')
         history = get_trade_history(m)
@@ -102,17 +154,56 @@ def save_all_trade_history():
 
         full_df.to_csv(filename, compression='gzip')
 
+    print('done!\n\n')
 
-def read_history(market):
+
+def save_all_trade_history_sql():
+    """
+    saves data to sql
+    """
+    for m in MARKETS:
+        print('saving', m, 'trade history')
+        history = get_trade_history(m)
+        if history is None or len(history) == 0:
+            print('no history!')
+            continue
+
+        df = make_history_df(history)
+        filename = HOME_DIR + 'data/trade_history/' + re.sub('-', '_', m) + '.csv.gz'
+        if os.path.exists(filename):
+            old_df = pd.read_csv(filename, index_col='TimeStamp')
+            full_df = old_df.append(df)
+            full_df.drop_duplicates(inplace=True)
+        else:
+            full_df = df
+
+        full_df.to_csv(filename, compression='gzip')
+
+    print('done!\n\n')
+
+
+def read_history_csv(market):
     filename = HOME_DIR + 'data/trade_history/' + re.sub('-', '_', market) + '.csv.gz'
     df = pd.read_csv(filename, index_col='TimeStamp')
     return df
 
 
+def convert_history_to_sql():
+    """
+    """
+    for m in MARKETS:
+        df = read_history_csv(m)
+
+
 def get_order_book(market):
     try:
-        # was having some weird error here, so moved the requests.get into the try block
-        res = requests.get('https://bittrex.com/api/v1.1/public/getorderbook?market=' + market + '&type=both&depth=50000')
+        while True:  # in case of SSL error, keep trying
+            try:
+                res = requests.get('https://bittrex.com/api/v1.1/public/getorderbook?market=' + market + '&type=both&depth=50000')
+                break
+            except:
+                time.sleep(10)
+
         timestamp = pd.to_datetime(datetime.now())
         if res.json()['success']:
             orders = res.json()['result']
