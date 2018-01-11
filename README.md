@@ -11,11 +11,26 @@ Install requirements:
 Also need to install async wrapper from here: https://github.com/absortium/poloniex-api
 no pip package as of now.
 
+# making the PSQL database
+First make sure postgresql is installed.  Then do
+`sudo su postgres`
+to enter a shell as the postgres user.  Then do
+`psql`
+to enter the postgresql interface.
+Next create a user:
+`CREATE USER nate WITH SUPERUSER CREATEDB PASSWORD 'testing123';`
+https://stackoverflow.com/a/15008311/4549682
+https://www.postgresql.org/docs/9.5/static/sql-createuser.html
+If you don't get the permissions fully correct, you can go back and alter the user:
+https://www.postgresql.org/docs/9.5/static/sql-alteruser.html
+The semicolons at the end are required; otherwise it won't work.
+
+
 # daily scraping
 ## Poloniex
 Probably best not to use cron actually, because when the computer shuts down, the files can get corrupted.
 Instead, should write a script that will start the scraping in tmux, so it can be stopped in a controlled fashion before rebooting.
- 
+
 To scrape poloniex daily, add this to crontab (`crontab -e`):
 (min hr day month weekday file)
 
