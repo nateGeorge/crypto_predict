@@ -459,6 +459,7 @@ def reject_outliers(sr, iq_range=0.5):
     iqr = qhigh - qlow
     return sr[ (sr - median).abs() <= iqr]
 
+
 def remove_outliers(df):
     """
     removes outliers for EDA

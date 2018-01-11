@@ -26,7 +26,7 @@ def get_home_dir(repo='crypto_predict'):
     home_dir = '/'.join(cwd_list[:repo_position[0] + 1]) + '/'
     return home_dir
 
-HOME_DIR = get_home_dir()
+HOME_DIR = '/media/nate/data_lake/crytpo_predict/'#get_home_dir()
 key = os.environ.get('polo_key')
 sec = os.environ.get('polo_sec')
 polo = Poloniex(key, sec)
@@ -231,6 +231,7 @@ def get_trade_history(market='BTC_AMP', two_h_delay=False, latest=None):
     """
     # first check the latest date on data already there
     datafile = TRADE_DATA_DIR + market + '.hdf5'
+    print(datafile)
     latest_ts = None
     old_df = None
     if os.path.exists(datafile):
