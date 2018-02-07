@@ -10,6 +10,9 @@ import pandas as pd
 import requests
 import psycopg2 as pg
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+# for writing to sql with pandas
+from sqlalchemy import create_engine
+
 
 PG_PASS = os.environ.get('pg_ps')
 TH_DB = 'bittrex'
@@ -26,10 +29,12 @@ except pg.OperationalError:
     conn.close()
     conn = pg.connect(dbname=TH_DB, user='nate', password=PG_PASS)
 
-# gets list of all tables
-cursor = conn.cursor()
-cursor.execute("select relname from pg_class where relkind='r' and relname !~ '^(pg_|sql_)';")
-print(cursor.fetchall())
+
+def get_all_tables():
+    # gets list of all tables
+    cursor = conn.cursor()
+    cursor.execute("select relname from pg_class where relkind='r' and relname !~ '^(pg_|sql_)';")
+    return cursor.fetchall()
 
 
 def get_home_dir():
@@ -49,7 +54,8 @@ def get_all_currency_pairs(show_mkts=False):
         try:
             res = requests.get('https://bittrex.com/api/v1.1/public/getmarkets')
             break
-        except:
+        except Exception as e:
+            print(e.message, e.args)
             time.sleep(10)
 
     if res.json()['success']:
@@ -75,7 +81,8 @@ def get_all_summaries():
         try:
             res = requests.get('https://bittrex.com/api/v1.1/public/getmarketsummaries')
             break
-        except:
+        except Exception as e:
+            print(e.message, e.args)
             time.sleep(10)
 
     if res.json()['success']:
@@ -93,7 +100,8 @@ def get_all_tickers():
             try:
                 res = requests.get('https://bittrex.com/api/v1.1/public/getticker?market=' + m)
                 break
-            except:
+            except Exception as e:
+                print(e.message, e.args)
                 time.sleep(10)
 
         if res.json()['success']:
@@ -113,11 +121,16 @@ def get_all_tickers():
 
 
 def get_trade_history(market):
+    tries = 0
     while True:  # sometimes an SSL connection error...just wait a few seconds and try again
+        tries += 1
+        if tries == 6:
+            return None
         try:
             res = requests.get('https://bittrex.com/api/v1.1/public/getmarkethistory?market=' + market)
             break
-        except:
+        except Exception as e:
+            print(e.message, e.args)
             time.sleep(10)
 
     try:
@@ -127,8 +140,9 @@ def get_trade_history(market):
         else:
             print('error! ', res.json()['message'])
             return None
-    except:
+    except Exception as e:
         print('exception! error!')
+        print(e.message, e.args)
         return None
 
 
@@ -190,9 +204,59 @@ def read_history_csv(market):
 
 def convert_history_to_sql():
     """
+    WARNING: will replace all data in SQL tables
     """
-    for m in MARKETS:
+    idx = MARKETS.index('BTC-SALT')
+    ms = MARKETS[idx:]
+    for m in ms:
+        print(m)
+        engine = create_engine("postgres://nate:{}@localhost:5432/postgres".format(PG_PASS))
+        engine.table_names()
+        conn = engine.connect()
+        conn.execute("commit")
+        table_name = '"' + m + '"'
+        # try to create db unless already there, then skip creation
+        try:
+            conn.execute("create database " + table_name + ';')
+        except Exception as e:
+            print(e.message, e.args)
+            pass
+        conn.execute("commit")
+        conn.close()
+        engine = create_engine('postgresql://nate:{}@localhost:5432/{}'.format(PG_PASS, m))
         df = read_history_csv(m)
+        df.to_sql(m, engine, if_exists='replace')
+
+    # cursor = conn.cursor()
+    # # all_tables = get_all_tables()
+    # was starting to do this with psycopg2 but forgot .to_sql in pandas...
+    # for m in MARKETS:
+    #     table_name = '"' + m + '"'
+    #     df = read_history_csv(m)
+    #     # create table if doesn't exist
+    #     if m not in all_tables:
+    #         cursor.execute("""CREATE TABLE {} (
+    #                             TradeTime TIMESTAMP,
+    #                             FillType VARCHAR,
+    #                             Id INTEGER,
+    #                             OrderType VARCHAR,
+    #                             Price NUMERIC,
+    #                             Quantity NUMERIC,
+    #                             Total NUMERIC
+    #                             );""".format(table_name))
+    #     times = pd.to_datetime(df.index).tz_localize('UTC')
+    #     row = df.iloc[0]
+    #     tup = (m,
+    #             times[0],
+    #             row['FillType'],
+    #             int(row['Id']),
+    #             row['OrderType'],
+    #             row['Price'],
+    #             row['Quantity'],
+    #             row['Total'])
+    #     cursor.execute("""INSERT INTO %s
+    #                         (TradeTime, FillType, Id, OrderType, Price, Quantity, Total)
+    #                         VALUES (%s, %s, %s, %s, %s, %s, %s);""", tup)
 
 
 def get_order_book(market):
@@ -201,7 +265,8 @@ def get_order_book(market):
             try:
                 res = requests.get('https://bittrex.com/api/v1.1/public/getorderbook?market=' + market + '&type=both&depth=50000')
                 break
-            except:
+            except Exception as e:
+                print(e.message, e.args)
                 time.sleep(10)
 
         timestamp = pd.to_datetime(datetime.now())
@@ -214,7 +279,8 @@ def get_order_book(market):
         else:
             print('error!', res.json()['message'])
             return None, None
-    except:
+    except Exception as e:
+        print(e.message, e.args)
         print('exception! error!')
         return None, None
 
