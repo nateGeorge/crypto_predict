@@ -25,6 +25,15 @@ If you don't get the permissions fully correct, you can go back and alter the us
 https://www.postgresql.org/docs/9.5/static/sql-alteruser.html
 The semicolons at the end are required; otherwise it won't work.
 
+## accessing postgresql database
+`sudo -u postgres psql postgres`
+or
+`sudo -u postgres psql nate`
+(username is last string)
+`\l` lists tables
+`\c bittrex` connects to bittrex database
+`SELECT * from bittrex LIMIT 1;` -- gets one entry
+`SELECT count(*) from bittrex;` -- gets number of entries in table
 
 # daily scraping
 ## Poloniex
