@@ -11,6 +11,7 @@ import traceback
 # a module Poloniex from the folder.  Better to run from within the
 # poloniex folder as a result
 from poloniex import Poloniex
+import poloniex
 import pandas as pd
 import feather as ft
 
@@ -58,7 +59,20 @@ def get_all_orderbooks():
     """
     # returns dict with currencyPair as primary keys, then 'asks', 'bids'
     # 'isFrozen', 'seq' - seq is the sequence number for the push api
-    orderbooks = polo.returnOrderBook(currencyPair='all', depth=1000000)
+    tries = 1
+    while True:
+        try:
+            orderbooks = polo.returnOrderBook(currencyPair='all', depth=1000000)
+            break
+        except polo.PoloniexError:
+            tries += 1
+            time.sleep(1)
+
+        if tries == 100:
+            print('unable to get orderbooks')
+            return None, None
+            break  # probably not necessary, but just in case
+
     timestamp = pd.to_datetime(datetime.now())
     sell_dfs = {}
     buy_dfs = {}
@@ -104,6 +118,13 @@ def save_orderbook(buy_df, sell_df, market):
 def save_all_order_books():
     print('retrieving orderbooks...')
     buy_dfs, sell_dfs = get_all_orderbooks()
+    if buy_dfs is None:
+        print('unable to get orderbooks, trying one more time')
+        buy_dfs, sell_dfs = get_all_orderbooks()
+        if buy_dfs is None:
+            print('still couldn\'t get orderbooks...')
+            return
+
     print('done.')
     save_orderbooks(buy_dfs, sell_dfs)
 
@@ -195,8 +216,28 @@ def remove_dupes(market='BTC_AMP'):
     dd_df.to_hdf(datafile, 'data', mode='w', complib='blosc', complevel=9, format='table')
 
 
+def get_tickers():
+    tries = 1
+    while True:
+        try:
+            ticks = polo.returnTicker()
+            return ticks
+            break
+        except polo.PoloniexError:
+            tries += 1
+            time.sleep(1)
+
+        if tries == 100:
+            print("couldn't get tickers")
+            return None
+            break
+
 def remove_all_dupes():
-    ticks = polo.returnTicker()
+    ticks = get_tickers()
+    if ticks is None:
+        print("couldn't get tickers")
+        return
+
     pairs = sorted(ticks.keys())
     for c in pairs:
         print('cleaning', c)
@@ -218,12 +259,32 @@ def convert_ft_hdf5(market='BTC_AMP'):
 
 
 def convert_all_to_hdf5():
-    ticks = polo.returnTicker()
+    ticks = get_tickers()
+    if ticks is None:
+        print("couldn't get tickers")
+        return
+
     pairs = sorted(ticks.keys())
     for c in pairs:
         print('converting to hdf5:', c)
         convert_ft_hdf5(market=c)
 
+
+def get_polo_hist(market, start, end):
+    tries = 1
+    while True:
+        try:
+            h = polo.marketTradeHist(currencyPair=market, start=start, end=end)
+            return h
+            break
+        except polo.PoloniexError:
+            tries += 1
+            time.sleep(1)
+
+        if tries == 100:
+            print("couldn't get trade history")
+            return None
+            break
 
 def get_trade_history(market='BTC_AMP', two_h_delay=False, latest=None):
     """
@@ -260,7 +321,11 @@ def get_trade_history(market='BTC_AMP', two_h_delay=False, latest=None):
 
     # get past time, subtract 4 weeks
     past = cur_ts - 60*60*24*7*4
-    h = polo.marketTradeHist(currencyPair=market, start=past, end=cur_ts)
+    h = get_polo_hist(market=market, start=past, end=cur_ts)
+    if h is None:
+        print("getting history choked")
+        return None, None
+
     full_df = pd.io.json.json_normalize(h)
     full_df['date'] = pd.to_datetime(full_df['date'])
     # very_earliest keeps track of the last date in the saved df on disk
@@ -279,7 +344,11 @@ def get_trade_history(market='BTC_AMP', two_h_delay=False, latest=None):
         past = earliest - 60*60*24*7*4  # subtract 4 weeks
         print('scraping another time...')
         start = time.time()
-        h = polo.marketTradeHist(currencyPair=market, start=past, end=earliest)
+        h = get_polo_hist(market=market, start=past, end=earliest)
+        if h is None:
+            print("getting history choked")
+            return None, None
+
         elapsed = time.time() - start
         # max api calls are 6/sec, don't want to get banned...
         if elapsed < 1/6.:
@@ -323,7 +392,11 @@ def save_trade_history(df, market, update):
 
 def save_all_trade_history(two_h_delay=False):
     start = time.time()
-    ticks = polo.returnTicker()
+    ticks = get_tickers()
+    if ticks is None:
+        print("couldn't get tickers")
+        return
+
     pairs = sorted(ticks.keys())
     for c in pairs:
         print('checking', c)
