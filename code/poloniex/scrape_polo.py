@@ -42,6 +42,7 @@ def make_data_dirs():
             [d + e for d in data_folders for e in exchanges]
     dirs = [HOME_DIR + d for d in dds]
     for d in dirs:
+        print(d)
         if not os.path.exists(d):
             os.mkdir(d)
 

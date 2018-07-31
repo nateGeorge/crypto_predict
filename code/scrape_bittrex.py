@@ -55,7 +55,7 @@ def get_all_currency_pairs(show_mkts=False):
             res = requests.get('https://bittrex.com/api/v1.1/public/getmarkets')
             break
         except Exception as e:
-            print(e.message, e.args)
+            print(e)
             time.sleep(10)
 
     if res.json()['success']:
@@ -82,7 +82,7 @@ def get_all_summaries():
             res = requests.get('https://bittrex.com/api/v1.1/public/getmarketsummaries')
             break
         except Exception as e:
-            print(e.message, e.args)
+            print(e)
             time.sleep(10)
 
     if res.json()['success']:
@@ -101,7 +101,7 @@ def get_all_tickers():
                 res = requests.get('https://bittrex.com/api/v1.1/public/getticker?market=' + m)
                 break
             except Exception as e:
-                print(e.message, e.args)
+                print(e)
                 time.sleep(10)
 
         if res.json()['success']:
@@ -130,7 +130,7 @@ def get_trade_history(market):
             res = requests.get('https://bittrex.com/api/v1.1/public/getmarkethistory?market=' + market)
             break
         except Exception as e:
-            print(e.message, e.args)
+            print(e)
             time.sleep(10)
 
     try:
@@ -142,7 +142,7 @@ def get_trade_history(market):
             return None
     except Exception as e:
         print('exception! error!')
-        print(e.message, e.args)
+        print(e)
         return None
 
 
@@ -219,7 +219,7 @@ def convert_history_to_sql():
         try:
             conn.execute("create database " + table_name + ';')
         except Exception as e:
-            print(e.message, e.args)
+            print(e)
             pass
         conn.execute("commit")
         conn.close()
@@ -266,7 +266,7 @@ def get_order_book(market):
                 res = requests.get('https://bittrex.com/api/v1.1/public/getorderbook?market=' + market + '&type=both&depth=50000')
                 break
             except Exception as e:
-                print(e.message, e.args)
+                print(e)
                 time.sleep(10)
 
         timestamp = pd.to_datetime(datetime.now())
@@ -280,7 +280,7 @@ def get_order_book(market):
             print('error!', res.json()['message'])
             return None, None
     except Exception as e:
-        print(e.message, e.args)
+        print(e)
         print('exception! error!')
         return None, None
 
