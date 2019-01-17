@@ -399,6 +399,10 @@ def save_all_trade_history(two_h_delay=False):
 
     pairs = sorted(ticks.keys())
     for c in pairs:
+        if 'EOS' in c:
+            print("EOS currently disabled for trading and throws error; skipping")
+            continue
+
         print('checking', c)
         df, update = get_trade_history(c, two_h_delay=two_h_delay)
 
