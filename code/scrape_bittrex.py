@@ -1,5 +1,6 @@
 # core
 import os
+import gc
 import re
 import time
 from datetime import datetime
@@ -144,6 +145,36 @@ def get_trade_history(market):
         print('exception! error!')
         print(e)
         return None
+
+
+def save_all_trade_history():
+    for m in MARKETS:
+        print('saving', m, 'trade history')
+        history = get_trade_history(m)
+        if history is None or len(history) == 0:
+            print('no history!')
+            continue
+
+        df = make_history_df(history)
+        filename = HOME_DIR + 'data/trade_history/' + re.sub('-', '_', m) + '.csv.gz'
+        if os.path.exists(filename):
+            old_df = pd.read_csv(filename, index_col='TimeStamp')
+            full_df = old_df.append(df)
+            full_df.drop_duplicates(inplace=True)
+        else:
+            full_df = df
+
+        full_df.to_csv(filename, compression='gzip')
+        # pause 5s to allow for graceful shutdown for now
+        del history
+        del df
+        del old_df
+        del full_df
+        gc.collect()
+        print('done saving; resting 5s')
+        time.sleep(2)
+
+    print('\n\ndone!\n\n')
 
 
 def save_all_trade_history_old():
