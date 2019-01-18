@@ -88,6 +88,11 @@ def get_all_orderbooks():
         sell_dfs[c].set_index('timestamp', inplace=True)
         buy_dfs[c].set_index('timestamp', inplace=True)
 
+    del orderbooks
+    del sell_headers
+    del buy_headers
+    gc.collect()
+
     return buy_dfs, sell_dfs
 
 
@@ -127,6 +132,9 @@ def save_all_order_books():
 
     print('done.')
     save_orderbooks(buy_dfs, sell_dfs)
+    del buy_dfs
+    del sell_dfs
+    gc.collect()
 
 
 def continuously_save_order_books(interval=600):
@@ -367,6 +375,11 @@ def get_trade_history(market='BTC_AMP', two_h_delay=False, latest=None):
         latest_idx = full_df[full_df['globalTradeID'] == old_df['globalTradeID']].index[0]
         # take everything from the next trade on
         full_df = full_df.iloc[latest_idx + 1:]
+
+    del old_df
+    del h
+    gc.collect()
+    
     if full_df.shape[0] > 0:
         # sometimes some duplicates  -- don't think we need this though, oh well
         full_df.drop_duplicates(inplace=True)
@@ -409,10 +422,16 @@ def save_all_trade_history(two_h_delay=False):
         if df is not None:
             print('saving', c)
             save_trade_history(df, c, update)
+            del df
+            del update
+            gc.collect()
 
     end = time.time()
 
     print('done!  took', int(end-start), 'seconds')
+    del ticks
+    del pairs
+    gc.collect()
 
 
 def continuously_save_trade_history(interval=600):
