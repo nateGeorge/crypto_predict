@@ -15,20 +15,25 @@ from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from sqlalchemy import create_engine
 
 
-PG_PASS = os.environ.get('pg_ps')
+PG_UNAME = os.environ.get('postgres_uname')
+PG_PASS = os.environ.get('postgres_pass')
 TH_DB = 'bittrex'
 # create db if not already there
 # check if db exists
-try:
-    conn = pg.connect(dbname=TH_DB, user='nate', password=PG_PASS)
-except pg.OperationalError:
-    conn = pg.connect(dbname='postgres', user='nate', password=PG_PASS)
-    conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
-    cur = conn.cursor()
-    cur.execute('CREATE DATABASE ' + TH_DB)
-    cur.close()
-    conn.close()
-    conn = pg.connect(dbname=TH_DB, user='nate', password=PG_PASS)
+
+def create_db_conn():
+    try:
+        conn = pg.connect(dbname=TH_DB, user=PG_UNAME, password=PG_PASS)
+    except pg.OperationalError:
+        conn = pg.connect(dbname='postgres', user=PG_UNAME, password=PG_PASS)
+        conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
+        cur = conn.cursor()
+        cur.execute('CREATE DATABASE ' + TH_DB)
+        cur.close()
+        conn.close()
+        conn = pg.connect(dbname=TH_DB, user='nate', password=PG_PASS)
+
+    return conn
 
 
 def get_all_tables():
@@ -168,7 +173,10 @@ def save_all_trade_history():
         # pause 5s to allow for graceful shutdown for now
         del history
         del df
-        del old_df
+        try:
+            del old_df
+        except NameError:
+            pass
         del full_df
         gc.collect()
         print('done saving; resting 5s')
