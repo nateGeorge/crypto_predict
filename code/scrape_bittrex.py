@@ -346,11 +346,20 @@ def save_order_book(market):
         buy_df.to_csv(buy_file, compression='gzip')
         sell_df.to_csv(sell_file, compression='gzip')
 
+    del orders
+    del timestamp
+    del buy_df
+    del sell_df
+    gc.collect()
+
 
 def save_all_order_books():
     for m in MARKETS:
         print('saving', m, '...')
         save_order_book(m)
+        print('sleeping 5s...')
+        time.sleep(5)
+
 
 
 def read_order_book(market):
@@ -367,6 +376,7 @@ def continuously_save_order_books(interval=600):
     def keep_saving():
         while True:
             save_all_order_books()
+            print("\n\ndone.")
             time.sleep(interval)
 
     thread = Thread(target=keep_saving)
