@@ -1,5 +1,6 @@
 # core
 import os
+import gc
 import sys
 import time
 from datetime import datetime, timedelta
@@ -379,7 +380,7 @@ def get_trade_history(market='BTC_AMP', two_h_delay=False, latest=None):
     del old_df
     del h
     gc.collect()
-    
+
     if full_df.shape[0] > 0:
         # sometimes some duplicates  -- don't think we need this though, oh well
         full_df.drop_duplicates(inplace=True)
