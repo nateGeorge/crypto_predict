@@ -131,8 +131,9 @@ def save_all_order_books():
             print('still couldn\'t get orderbooks...')
             return
 
-    print('done.')
     save_orderbooks(buy_dfs, sell_dfs)
+    print('done.')
+
     del buy_dfs
     del sell_dfs
     gc.collect()
