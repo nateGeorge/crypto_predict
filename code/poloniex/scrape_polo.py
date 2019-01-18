@@ -11,6 +11,7 @@ import traceback
 # if running from the code/ folder, this will try to import
 # a module Poloniex from the folder.  Better to run from within the
 # poloniex folder as a result
+# should be the python-poloniex package, not poloniex (when installing with pip)
 from poloniex import Poloniex
 import poloniex
 import pandas as pd
@@ -32,6 +33,7 @@ HOME_DIR = '/media/nate/data_lake/crytpo_predict/'#get_home_dir()
 key = os.environ.get('polo_key')
 sec = os.environ.get('polo_sec')
 polo = Poloniex(key, sec)
+
 
 def make_data_dirs():
     """
@@ -337,6 +339,12 @@ def get_trade_history(market='BTC_AMP', two_h_delay=False, latest=None):
         return None, None
 
     full_df = pd.io.json.json_normalize(h)
+    if full_df.shape[0] == 0:
+        print('no data, skipping')
+        del full_df
+        del h
+        gc.collect()
+        return None, None
     full_df['date'] = pd.to_datetime(full_df['date'])
     # very_earliest keeps track of the last date in the saved df on disk
     if latest_ts is None:
