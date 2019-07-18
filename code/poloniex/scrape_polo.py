@@ -339,6 +339,11 @@ def get_trade_history(market='BTC_AMP', two_h_delay=False, latest=None):
         return None, None
 
     full_df = pd.io.json.json_normalize(h)
+    # new: orderNumber is an unknown thing, not in docs
+    # tradeID as well as global trade id...drop the ordernumber for now
+    full_df.drop('orderNumber', axis=1, inplace=True)
+    full_df.drop('tradeID', axis=1, inplace=True)
+
     if full_df.shape[0] == 0:
         print('no data, skipping')
         del full_df
@@ -381,6 +386,7 @@ def get_trade_history(market='BTC_AMP', two_h_delay=False, latest=None):
     # find where we should cutoff new data
     full_df.sort_values(by='tradeID', inplace=True)
     full_df.reset_index(inplace=True, drop=True)
+    full_df['date'] = pd.to_datetime(full_df['date'], utc=True)
     if latest is not None:
         latest_idx = full_df[full_df['globalTradeID'] == old_df['globalTradeID']].index[0]
         # take everything from the next trade on
@@ -474,6 +480,63 @@ def get_loans(m='BTC_ETH'):
     pass
 
 
+def load_trade_history(market='USDT_BTC', format='ft'):
+    """
+    Loads trade history from hdf5 or feather file.
+
+    market: string, currency pair
+    format: string, ft for feather or hdf for hdf5
+    """
+    if format == 'hdf':
+        datafile = TRADE_DATA_DIR + market + '.hdf5'
+        df = pd.read_hdf(datafile)
+    elif format == 'ft':
+        datafile = TRADE_DATA_DIR + market + '.ft'
+        df = pd.read_feather(datafile)
+
+    return df
+
+
+def convert_to_sql(market='USDT_BTC', format='ft'):
+    """
+    Moves data to SQL database from feather or hdf5 file.
+    """
+    if format == 'hdf':
+        datafile = TRADE_DATA_DIR + market + '.hdf5'
+        df = pd.read_hdf(datafile)
+    elif format == 'ft':
+        datafile = TRADE_DATA_DIR + market + '.ft'
+        df = pd.read_feather(datafile)
+
+
+from sqlalchemy import create_engine
+
+def create_sql_connection(remote=False, db='poloniex_trade_history'):
+    """
+    Creates connection to SQL database
+    """
+    user = os.environ.get('psql_username')
+    passwd = os.environ.get('pqsl_pass')
+    engine = create_engine('postgresql://{}:{}@localhost:5432/{}'.format(user, passwd, db))
+
+
+def create_first_table(engine, market='USDT_BTC', db='poloniex_trade_history'):
+    """
+    Creates first table in db for market pair.  After the first table, others can inherit the columns and datatypes.
+    """
+    with engine.connect() as con:
+        con.execute("""CREATE TABLE {} (
+                       amount float,
+                       date timestamptz,
+                       globalTradeID bigint,
+                       rate double precision,
+                       total double precision,
+                       type boolean
+                       )""".format(market))
+
+
+with engine.connect() as con:
+    con.execute('SELECT * FROM USDT_BTC')
 
 # TODO: get all trade history
 # get all market depth and subscribe to updates, on major change (buy/sell)
