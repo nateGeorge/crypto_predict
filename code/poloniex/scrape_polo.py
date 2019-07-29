@@ -244,6 +244,7 @@ def get_tickers():
             return None
             break
 
+
 def remove_all_dupes():
     ticks = get_tickers()
     if ticks is None:
@@ -298,8 +299,11 @@ def get_polo_hist(market, start, end):
             return None
             break
 
-def get_trade_history(market='BTC_AMP', two_h_delay=False, latest=None):
+
+def get_trade_history_old(market='BTC_AMP', two_h_delay=False, latest=None):
     """
+    Saves trade history to csv.gz file.
+
     :param two_h_delay: if a 2 hour delay should be enacted between scrapings
     :param latest: pandas series with latest trade datapoint in csv
     """
@@ -400,6 +404,113 @@ def get_trade_history(market='BTC_AMP', two_h_delay=False, latest=None):
         return full_df, update
     else:
         return None, None
+
+
+def get_trade_history(market='BTC_AMP', two_h_delay=False, latest=None):
+    """
+    Saves trade history to PSQL database.
+
+    :param two_h_delay: if a 2 hour delay should be enacted between scrapings
+    :param latest: pandas series with latest trade datapoint in csv
+    """
+    # get connection to DB
+
+
+    # get latest date
+    latest_ts = None
+    if os.path.exists(datafile):
+        # right now the csvs are saved as earliest data in the top
+        old_df = pd.read_hdf(datafile, start=-1)  # read last row only
+        latest_ts = old_df.iloc[-1]['date'].value / 10**9
+
+        # get current timestamp in UTC...tradehist method takes utc times
+        d = datetime.utcnow()
+        epoch = datetime(1970, 1, 1)
+        cur_ts = (d - epoch).total_seconds()
+        if two_h_delay and (cur_ts - latest_ts) < 7200:
+            print('scraped within last 2 hours, not scraping again...')
+            return None, None
+        else:
+            print('scraping updates')
+            update = True
+    else:
+        print('scraping new, no file exists')
+        update = False
+        # get current timestamp in UTC...tradehist method takes utc times
+        d = datetime.utcnow()
+        epoch = datetime(1970, 1, 1)
+        cur_ts = (d - epoch).total_seconds()
+
+    # get past time, subtract 4 weeks
+    past = cur_ts - 60*60*24*7*4
+    h = get_polo_hist(market=market, start=past, end=cur_ts)
+    if h is None:
+        print("getting history choked")
+        return None, None
+
+    full_df = pd.io.json.json_normalize(h)
+    if full_df.shape[0] == 0:
+        print('no data, skipping')
+        del full_df
+        del h
+        gc.collect()
+        return None, None
+    full_df['date'] = pd.to_datetime(full_df['date'])
+    # very_earliest keeps track of the last date in the saved df on disk
+    if latest_ts is None:
+        very_earliest = 0
+    else:
+        very_earliest = latest_ts
+
+    earliest = 0
+    cur_earliest = full_df.iloc[-1]['date'].value / 10**9
+    # if we get to the start of the data, quit, or if the earliest currently
+    # scraped date is less than the earliest in the saved df on disk, break
+    # the loop
+    while cur_earliest != earliest and cur_earliest > very_earliest:
+        earliest = cur_earliest
+        past = earliest - 60*60*24*7*4  # subtract 4 weeks
+        print('scraping another time...')
+        start = time.time()
+        h = get_polo_hist(market=market, start=past, end=earliest)
+        if h is None:
+            print("getting history choked")
+            return None, None
+
+        elapsed = time.time() - start
+        # max api calls are 6/sec, don't want to get banned...
+        if elapsed < 1/6.:
+            print('scraping too fast, sleeping...')
+            time.sleep(1/5. - elapsed)
+
+        df = pd.io.json.json_normalize(h)
+        df['date'] = pd.to_datetime(df['date'])
+        full_df = full_df.append(df)
+        cur_earliest = df.iloc[-1]['date'].value / 10**9
+
+    # find where we should cutoff new data
+    full_df.sort_values(by='tradeID', inplace=True)
+    full_df.reset_index(inplace=True, drop=True)
+    if latest is not None:
+        latest_idx = full_df[full_df['globalTradeID'] == old_df['globalTradeID']].index[0]
+        # take everything from the next trade on
+        full_df = full_df.iloc[latest_idx + 1:]
+
+    del old_df
+    del h
+    gc.collect()
+
+    if full_df.shape[0] > 0:
+        # sometimes some duplicates  -- don't think we need this though, oh well
+        full_df.drop_duplicates(inplace=True)
+        # sorted from oldest at the top to newest at bottom for now
+        for col in ['amount', 'rate', 'total']:
+            full_df[col] = pd.to_numeric(full_df[col])
+
+        return full_df, update
+    else:
+        return None, None
+
 
 
 def save_trade_history(df, market, update):
