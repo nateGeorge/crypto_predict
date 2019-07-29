@@ -6,6 +6,8 @@ import time
 from datetime import datetime, timedelta
 from threading import Thread
 import traceback
+import csv
+from io import StringIO
 
 # installed
 # if running from the code/ folder, this will try to import
@@ -16,6 +18,13 @@ from poloniex import Poloniex
 import poloniex
 import pandas as pd
 import feather as ft
+from sqlalchemy import create_engine
+from sqlalchemy.dialects.postgresql import \
+    ARRAY, BIGINT, BIT, BOOLEAN, BYTEA, CHAR, CIDR, DATE, \
+    DOUBLE_PRECISION, ENUM, FLOAT, HSTORE, INET, INTEGER, \
+    INTERVAL, JSON, JSONB, MACADDR, MONEY, NUMERIC, OID, REAL, SMALLINT, TEXT, \
+    TIME, TIMESTAMP, UUID, VARCHAR, INT4RANGE, INT8RANGE, NUMRANGE, \
+    DATERANGE, TSRANGE, TSTZRANGE, TSVECTOR
 
 
 def get_home_dir(repo='crypto_predict'):
@@ -343,6 +352,11 @@ def get_trade_history_old(market='BTC_AMP', two_h_delay=False, latest=None):
         return None, None
 
     full_df = pd.io.json.json_normalize(h)
+    # new: orderNumber is an unknown thing, not in docs
+    # tradeID as well as global trade id...drop the ordernumber for now
+    full_df.drop('orderNumber', axis=1, inplace=True)
+    full_df.drop('tradeID', axis=1, inplace=True)
+
     if full_df.shape[0] == 0:
         print('no data, skipping')
         del full_df
@@ -385,6 +399,7 @@ def get_trade_history_old(market='BTC_AMP', two_h_delay=False, latest=None):
     # find where we should cutoff new data
     full_df.sort_values(by='tradeID', inplace=True)
     full_df.reset_index(inplace=True, drop=True)
+    full_df['date'] = pd.to_datetime(full_df['date'], utc=True)
     if latest is not None:
         latest_idx = full_df[full_df['globalTradeID'] == old_df['globalTradeID']].index[0]
         # take everything from the next trade on
@@ -583,6 +598,137 @@ def get_loans(m='BTC_ETH'):
     """
     """
     pass
+
+
+def load_trade_history(market='USDT_BTC', format='ft'):
+    """
+    Loads trade history from hdf5 or feather file.
+
+    market: string, currency pair
+    format: string, ft for feather or hdf for hdf5
+    """
+    if format == 'hdf':
+        datafile = TRADE_DATA_DIR + market + '.hdf5'
+        df = pd.read_hdf(datafile)
+    elif format == 'ft':
+        datafile = TRADE_DATA_DIR + market + '.ft'
+        df = pd.read_feather(datafile)
+
+    return df
+
+
+def convert_to_sql(market='USDT_BTC', format='ft'):
+    """
+    Moves data to SQL database from feather or hdf5 file.
+    """
+    if format == 'hdf':
+        datafile = TRADE_DATA_DIR + market + '.hdf5'
+        df = pd.read_hdf(datafile)
+    elif format == 'ft':
+        datafile = TRADE_DATA_DIR + market + '.ft'
+        df = pd.read_feather(datafile)
+
+
+
+def create_sql_connection(remote=False, db='poloniex_trade_history'):
+    """
+    Creates connection to SQL database
+    """
+    user = os.environ.get('psql_username')
+    passwd = os.environ.get('psql_pass')
+    engine = create_engine('postgresql://{}:{}@cerium:5432/{}'.format(user, passwd, db))
+    return engine
+
+
+def create_first_table(engine, market='USDT_BTC', db='poloniex_trade_history'):
+    """
+    Creates first table in db for market pair.  After the first table, others can inherit the columns and datatypes.
+    """
+    with engine.connect() as con:
+        con.execute("""CREATE TABLE IF NOT EXISTS {} (
+                       amount double precision,
+                       date timestamptz,
+                       globalTradeID bigint,
+                       rate double precision,
+                       total double precision,
+                       type boolean
+                       )""".format(market))
+
+
+def create_all_tables(engine):
+    """
+    Creates all tables for possible datasets on poloniex.
+    """
+    ticks = get_tickers()
+    pairs = sorted(ticks.keys())
+    for p in pairs:
+        with engine.connect() as con:
+            con.execute("""CREATE TABLE IF NOT EXISTS {} (
+                           amount double precision,
+                           date timestamptz,
+                           globalTradeID bigint,
+                           rate double precision,
+                           total double precision,
+                           type boolean
+                           )""".format(p))
+
+
+def convert_buy_sell_boolean(x):
+    if x == 'buy':
+        return 1
+    elif x == 'sell':
+        return 0
+
+
+def move_feather_to_sql(engine):
+    """
+    Moves all feather files to the SQL database.  Currently just gets active pairs.
+    """
+    dtypes = {'amount': DOUBLE_PRECISION,
+                'date': TIMESTAMP,
+                'globalTradeID': BIGINT,
+                'rate': DOUBLE_PRECISION,
+                'total': DOUBLE_PRECISION,
+                'type' : BOOLEAN}
+    ticks = get_tickers()
+    pairs = sorted(ticks.keys())
+    for p in pairs:
+        print(p)
+        datafile = TRADE_DATA_DIR + market + '.ft'
+        df = pd.read_feather(datafile)
+        # get rid of unnecessary column; convert type (buy/sell) to boolean
+        df.drop('tradeID', axis=1, inplace=True)
+        df['type'] = df['type'].apply(convert_buy_sell_boolean)
+        df['type'] = df['type'].astype('bool')
+        df.columns = [c.lower() for c in df.columns]
+
+        start = time.time()
+        df.to_sql(p.lower(), engine, if_exists='append', index=False, method=psql_insert_copy, chunksize=10000000, dtype=dtypes)
+        end = time.time()
+        print('took', end - start, 'seconds')
+
+
+
+
+def psql_insert_copy(table, conn, keys, data_iter):
+    # gets a DBAPI connection that can provide a cursor
+    # https://pandas.pydata.org/pandas-docs/stable/user_guide/io.html#io-sql-method
+    dbapi_conn = conn.connection
+    with dbapi_conn.cursor() as cur:
+        s_buf = StringIO()
+        writer = csv.writer(s_buf)
+        writer.writerows(data_iter)
+        s_buf.seek(0)
+
+        columns = ', '.join('"{}"'.format(k) for k in keys)
+        if table.schema:
+            table_name = '{}.{}'.format(table.schema, table.name)
+        else:
+            table_name = table.name
+
+        sql = 'COPY {} ({}) FROM STDIN WITH CSV'.format(
+            table_name, columns)
+        cur.copy_expert(sql=sql, file=s_buf)
 
 
 
