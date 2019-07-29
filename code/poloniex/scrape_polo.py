@@ -13,7 +13,8 @@ from io import StringIO
 # if running from the code/ folder, this will try to import
 # a module Poloniex from the folder.  Better to run from within the
 # poloniex folder as a result
-# should be the python-poloniex package, not poloniex (when installing with pip)
+# should be the poloniexapi package, not poloniex (when installing with pip)
+# from here: https://github.com/s4w3d0ff/python-poloniex
 from poloniex import Poloniex
 import poloniex
 import pandas as pd
@@ -42,6 +43,13 @@ HOME_DIR = '/media/nate/data_lake/crytpo_predict/'#get_home_dir()
 key = os.environ.get('polo_key')
 sec = os.environ.get('polo_sec')
 polo = Poloniex(key, sec)
+
+trade_history_dtypes = {'amount': DOUBLE_PRECISION,
+                        'date': TIMESTAMP,
+                        'globalTradeID': BIGINT,
+                        'rate': DOUBLE_PRECISION,
+                        'total': DOUBLE_PRECISION,
+                        'type' : BOOLEAN}
 
 
 def make_data_dirs():
@@ -309,6 +317,17 @@ def get_polo_hist(market, start, end):
             break
 
 
+def try_to_get_dates():
+    # get earliest trade to compare with existing data
+    import pytz
+    market = 'USDT_BTC'
+    query = 'SELECT * FROM {} ORDER BY globaltradeid LIMIT 1;'.format(market.lower())
+    query = 'SELECT * FROM {} WHERE globaltradeid = 7136498;'.format(market.lower())
+    earliest_point = engine.execute(query).fetchone()
+    earliest_ts = datetime.timestamp(earliest_point[1].astimezone(pytz.utc))
+    h = get_polo_hist(market, start=earliest_ts, end=earliest_ts + 20000)
+
+
 def get_trade_history_old(market='BTC_AMP', two_h_delay=False, latest=None):
     """
     Saves trade history to csv.gz file.
@@ -421,40 +440,57 @@ def get_trade_history_old(market='BTC_AMP', two_h_delay=False, latest=None):
         return None, None
 
 
-def get_trade_history(market='BTC_AMP', two_h_delay=False, latest=None):
+def get_trade_history(market='USDC_GRIN', two_h_delay=False):
     """
+    USDC_GRIN is best to test with for now because it dosen't have lots of data.
+
     Saves trade history to PSQL database.
 
     :param two_h_delay: if a 2 hour delay should be enacted between scrapings
-    :param latest: pandas series with latest trade datapoint in csv
     """
     # get connection to DB
+    engine = create_sql_connection()
+    #conn = engine.connect()
+    tables = engine.table_names()
 
-
-    # get latest date
+    # get latest date if any data exists
     latest_ts = None
-    if os.path.exists(datafile):
+    no_data = True
+    if market.lower() in tables:
         # right now the csvs are saved as earliest data in the top
-        old_df = pd.read_hdf(datafile, start=-1)  # read last row only
-        latest_ts = old_df.iloc[-1]['date'].value / 10**9
-
-        # get current timestamp in UTC...tradehist method takes utc times
-        d = datetime.utcnow()
-        epoch = datetime(1970, 1, 1)
-        cur_ts = (d - epoch).total_seconds()
-        if two_h_delay and (cur_ts - latest_ts) < 7200:
-            print('scraped within last 2 hours, not scraping again...')
-            return None, None
+        query = 'SELECT * FROM {} ORDER BY date DESC LIMIT 1;'.format(market.lower())
+        #columns = conn.execute(query).keys()
+        latest_point = engine.execute(query).fetchone()  # get latest datapoint
+        if latest_point is None:
+            print("no data in table")
         else:
-            print('scraping updates')
-            update = True
-    else:
-        print('scraping new, no file exists')
+            no_data = False
+
+            latest_ts = datetime.timestamp(latest_point[1])
+
+            # get current timestamp in UTC...tradehist method takes utc times
+            d = datetime.utcnow()
+            epoch = datetime(1970, 1, 1)
+            cur_ts = (d - epoch).total_seconds()
+            if two_h_delay and (cur_ts - latest_ts) < 7200:
+                print('scraped within last 2 hours, not scraping again...')
+                engine.dispose()
+                return None, None
+            else:
+                print('scraping updates')
+                update = True
+
+    if no_data:
+        print('scraping new, no table exists')
+        create_table(engine, market)
         update = False
         # get current timestamp in UTC...tradehist method takes utc times
         d = datetime.utcnow()
         epoch = datetime(1970, 1, 1)
         cur_ts = (d - epoch).total_seconds()
+
+    # don't need psql connection after this
+    engine.dispose()
 
     # get past time, subtract 4 weeks
     past = cur_ts - 60*60*24*7*4
@@ -470,7 +506,9 @@ def get_trade_history(market='BTC_AMP', two_h_delay=False, latest=None):
         del h
         gc.collect()
         return None, None
-    full_df['date'] = pd.to_datetime(full_df['date'])
+
+    full_df = clean_df(full_df)
+
     # very_earliest keeps track of the last date in the saved df on disk
     if latest_ts is None:
         very_earliest = 0
@@ -499,19 +537,14 @@ def get_trade_history(market='BTC_AMP', two_h_delay=False, latest=None):
             time.sleep(1/5. - elapsed)
 
         df = pd.io.json.json_normalize(h)
-        df['date'] = pd.to_datetime(df['date'])
+        df = clean_df(df)
         full_df = full_df.append(df)
         cur_earliest = df.iloc[-1]['date'].value / 10**9
 
     # find where we should cutoff new data
-    full_df.sort_values(by='tradeID', inplace=True)
+    full_df.sort_values(by='globaltradeid', inplace=True)
     full_df.reset_index(inplace=True, drop=True)
-    if latest is not None:
-        latest_idx = full_df[full_df['globalTradeID'] == old_df['globalTradeID']].index[0]
-        # take everything from the next trade on
-        full_df = full_df.iloc[latest_idx + 1:]
 
-    del old_df
     del h
     gc.collect()
 
@@ -527,8 +560,22 @@ def get_trade_history(market='BTC_AMP', two_h_delay=False, latest=None):
         return None, None
 
 
+def clean_df(df):
+    """
+    cleans up raw data from poloniex
+    """
+    df['date'] = pd.to_datetime(df['date'])
+    df['date'] = df['date'].dt.tz_localize('UTC')
+    df.drop('tradeID', axis=1, inplace=True)
+    df.drop('orderNumber', axis=1, inplace=True)
+    df['type'] = df['type'].apply(convert_buy_sell_boolean)
+    df['type'] = df['type'].astype('bool')
+    df.columns = [c.lower() for c in df.columns]
 
-def save_trade_history(df, market, update):
+    return df
+
+
+def save_trade_history_hdf(df, market, update):
     """
     Saves a dataframe of the trade history for a market.
     """
@@ -539,7 +586,16 @@ def save_trade_history(df, market, update):
         df.to_hdf(filename, 'data', mode='w', complib='blosc', complevel=9, format='table')
 
 
-def save_all_trade_history(two_h_delay=False):
+def save_trade_history_psql(df, market):
+    """
+    Saves a dataframe of the trade history for a market.
+    """
+    engine = create_sql_connection()
+    df.to_sql(market.lower(), engine, if_exists='append', index=False, method=psql_insert_copy, chunksize=10000000, dtype=trade_history_dtypes)
+    engine.dispose()
+
+
+def save_all_trade_history_hdf(two_h_delay=False):
     start = time.time()
     ticks = get_tickers()
     if ticks is None:
@@ -570,7 +626,39 @@ def save_all_trade_history(two_h_delay=False):
     gc.collect()
 
 
-def continuously_save_trade_history(interval=600):
+def save_all_trade_history_psql(two_h_delay=False):
+    start = time.time()
+    ticks = get_tickers()
+    if ticks is None:
+        print("couldn't get tickers")
+        return
+
+    pairs = sorted(ticks.keys())
+    for c in pairs:
+        if 'EOS' in c:
+            print("EOS was disabled for trading and threw error; skipping")
+            continue
+
+        print('checking', c)
+        df, update = get_trade_history(c, two_h_delay=two_h_delay)
+
+        if df is not None:
+            print('saving', c)
+            save_trade_history_psql(df, c)
+            del df
+            del update
+            gc.collect()
+
+    end = time.time()
+
+    print('done!  took', int(end-start), 'seconds')
+    backup_db()
+    del ticks
+    del pairs
+    gc.collect()
+
+
+def continuously_save_trade_history_old(interval=600):
     """
     Saves all order books every 'interval' seconds.
     Poloniex allows 6 calls/second before your IP is banned.
@@ -579,6 +667,24 @@ def continuously_save_trade_history(interval=600):
         while True:
             try:
                 save_all_trade_history()
+            except:
+                traceback.print_exc()
+
+            time.sleep(interval)
+
+    thread = Thread(target=keep_saving)
+    thread.start()
+
+
+def continuously_save_trade_history(interval=600):
+    """
+    Saves all order books every 'interval' seconds to PSQL.
+    Poloniex allows 6 calls/second before your IP is banned/blocked.
+    """
+    def keep_saving():
+        while True:
+            try:
+                save_all_trade_history_psql()
             except:
                 traceback.print_exc()
 
@@ -619,7 +725,7 @@ def load_trade_history(market='USDT_BTC', format='ft'):
 
 def convert_to_sql(market='USDT_BTC', format='ft'):
     """
-    Moves data to SQL database from feather or hdf5 file.
+    Moves data to SQL database from feather or hdf5 file.  Not finished, should probably delete.
     """
     if format == 'hdf':
         datafile = TRADE_DATA_DIR + market + '.hdf5'
@@ -662,15 +768,21 @@ def create_all_tables(engine):
     ticks = get_tickers()
     pairs = sorted(ticks.keys())
     for p in pairs:
-        with engine.connect() as con:
-            con.execute("""CREATE TABLE IF NOT EXISTS {} (
-                           amount double precision,
-                           date timestamptz,
-                           globalTradeID bigint,
-                           rate double precision,
-                           total double precision,
-                           type boolean
-                           )""".format(p))
+        create_table(engine, p)
+
+
+def create_table(engine, market):
+    with engine.connect() as con:
+        con.execute("""CREATE TABLE IF NOT EXISTS {} (
+                       amount double precision,
+                       date timestamptz,
+                       globalTradeID bigint,
+                       rate double precision,
+                       total double precision,
+                       type boolean
+                       )""".format(market))
+
+        con.execute("""SET TIMEZONE TO 'UTC';""")
 
 
 def convert_buy_sell_boolean(x):
@@ -684,12 +796,6 @@ def move_feather_to_sql(engine):
     """
     Moves all feather files to the SQL database.  Currently just gets active pairs.
     """
-    dtypes = {'amount': DOUBLE_PRECISION,
-                'date': TIMESTAMP,
-                'globalTradeID': BIGINT,
-                'rate': DOUBLE_PRECISION,
-                'total': DOUBLE_PRECISION,
-                'type' : BOOLEAN}
     ticks = get_tickers()
     pairs = sorted(ticks.keys())
     for p in pairs:
@@ -703,11 +809,9 @@ def move_feather_to_sql(engine):
         df.columns = [c.lower() for c in df.columns]
 
         start = time.time()
-        df.to_sql(p.lower(), engine, if_exists='append', index=False, method=psql_insert_copy, chunksize=10000000, dtype=dtypes)
+        df.to_sql(p.lower(), engine, if_exists='append', index=False, method=psql_insert_copy, chunksize=10000000, dtype=trade_history_dtypes)
         end = time.time()
         print('took', end - start, 'seconds')
-
-
 
 
 def psql_insert_copy(table, conn, keys, data_iter):
@@ -730,6 +834,24 @@ def psql_insert_copy(table, conn, keys, data_iter):
             table_name, columns)
         cur.copy_expert(sql=sql, file=s_buf)
 
+
+def backup_db():
+    """
+    exports backup of database
+    """
+    tz = pytz.timezone('UTC')
+    todays_date_utc = datetime.now(tz).strftime('%m-%d-%Y')
+    filename = '/home/nate/Dropbox/data/postgresql/crypto/poloniex_trade_history.{}.pgsql'.format(todays_date_utc)
+
+    pg_pass = os.environ.get('postgres_pass')
+    os.system('export PGPASSWORD=' + pg_pass)
+    os.system('pg_dump -U nate rss_feeds > ' + filename)
+    # remove old files
+    list_of_files = glob.glob('/home/nate/Dropbox/data/postgresql/crypto/poloniex_trade_history.*.pgsql')
+    latest_file = max(list_of_files, key=os.path.getctime)
+    for f in list_of_files:
+        if f != latest_file:
+            os.remove(f)
 
 
 # TODO: get all trade history
