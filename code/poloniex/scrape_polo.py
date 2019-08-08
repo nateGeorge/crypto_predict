@@ -176,6 +176,15 @@ def continuously_save_order_books(interval=600):
     thread.start()
 
 
+def load_order_book(market='BTC_CLAM'):
+    datapath = HOME_DIR + 'data/order_books/poloniex/'
+    buy_file = datapath + 'buy_orders_' + market + '.csv.gz'
+    sell_file = datapath + 'sell_orders_' + market + '.csv.gz'
+    buy_df = pd.read_csv(buy_file)
+    sell_df = pd.read_csv(sell_file)
+    return buy_df, sell_df
+
+
 def recover_file(datafile, chunksize=1000000):
     """
     If EOFError comes up, reads as much of the dataframe as possible.
@@ -394,6 +403,7 @@ def get_trade_history_old(market='BTC_AMP', two_h_delay=False, latest=None):
     # if we get to the start of the data, quit, or if the earliest currently
     # scraped date is less than the earliest in the saved df on disk, break
     # the loop
+    dfs = []
     while cur_earliest != earliest and cur_earliest > very_earliest:
         earliest = cur_earliest
         past = earliest - 60*60*24*7*4  # subtract 4 weeks
@@ -404,17 +414,24 @@ def get_trade_history_old(market='BTC_AMP', two_h_delay=False, latest=None):
             print("getting history choked")
             return None, None
 
+        df = pd.io.json.json_normalize(h)
+        df['date'] = pd.to_datetime(df['date'])
+        dfs.append(df)
+        # full_df = full_df.append(df)
+        cur_earliest = df.iloc[-1]['date'].value / 10**9
+        
         elapsed = time.time() - start
         # max api calls are 6/sec, don't want to get banned...
         if elapsed < 1/6.:
-            print('scraping too fast, sleeping...')
+            print('scraped in', elapsed)
+            print('scraping too fast, sleeping for', 1/5. - elapsed)
             time.sleep(1/5. - elapsed)
 
-        df = pd.io.json.json_normalize(h)
-        df['date'] = pd.to_datetime(df['date'])
-        full_df = full_df.append(df)
-        cur_earliest = df.iloc[-1]['date'].value / 10**9
+        print('took', time.time() - start, 's to fully scrape one point')
 
+
+
+    full_df = pd.concat(dfs)
     # find where we should cutoff new data
     full_df.sort_values(by='tradeID', inplace=True)
     full_df.reset_index(inplace=True, drop=True)
@@ -733,7 +750,6 @@ def convert_to_sql(market='USDT_BTC', format='ft'):
     elif format == 'ft':
         datafile = TRADE_DATA_DIR + market + '.ft'
         df = pd.read_feather(datafile)
-
 
 
 def create_sql_connection(remote=False, db='poloniex_trade_history'):
