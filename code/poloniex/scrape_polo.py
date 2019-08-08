@@ -419,7 +419,7 @@ def get_trade_history_old(market='BTC_AMP', two_h_delay=False, latest=None):
         dfs.append(df)
         # full_df = full_df.append(df)
         cur_earliest = df.iloc[-1]['date'].value / 10**9
-        
+
         elapsed = time.time() - start
         # max api calls are 6/sec, don't want to get banned...
         if elapsed < 1/6.:
@@ -537,6 +537,7 @@ def get_trade_history(market='USDC_GRIN', two_h_delay=False):
     # if we get to the start of the data, quit, or if the earliest currently
     # scraped date is less than the earliest in the saved df on disk, break
     # the loop
+    dfs = []
     while cur_earliest != earliest and cur_earliest > very_earliest:
         earliest = cur_earliest
         past = earliest - 60*60*24*7*4  # subtract 4 weeks
@@ -547,25 +548,32 @@ def get_trade_history(market='USDC_GRIN', two_h_delay=False):
             print("getting history choked")
             return None, None
 
+        df = pd.io.json.json_normalize(h)
+        df['date'] = pd.to_datetime(df['date'])
+        dfs.append(df)
+        # full_df = full_df.append(df)
+        cur_earliest = df.iloc[-1]['date'].value / 10**9
+
         elapsed = time.time() - start
         # max api calls are 6/sec, don't want to get banned...
         if elapsed < 1/6.:
-            print('scraping too fast, sleeping...')
+            print('scraped in', elapsed)
+            print('scraping too fast, sleeping for', 1/5. - elapsed)
             time.sleep(1/5. - elapsed)
 
-        df = pd.io.json.json_normalize(h)
-        df = clean_df(df)
-        full_df = full_df.append(df)
-        cur_earliest = df.iloc[-1]['date'].value / 10**9
+        print('took', time.time() - start, 's to fully scrape one point')
 
-    # find where we should cutoff new data
-    full_df.sort_values(by='globaltradeid', inplace=True)
-    full_df.reset_index(inplace=True, drop=True)
+
+
 
     del h
     gc.collect()
 
-    if full_df.shape[0] > 0:
+    if len(dfs) > 0: #full_df.shape[0] > 0:
+        full_df = pd.concat(dfs)
+        # find where we should cutoff new data
+        full_df.sort_values(by='globaltradeid', inplace=True)
+        full_df.reset_index(inplace=True, drop=True)
         # sometimes some duplicates  -- don't think we need this though, oh well
         full_df.drop_duplicates(inplace=True)
         # sorted from oldest at the top to newest at bottom for now
