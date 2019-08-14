@@ -524,6 +524,7 @@ def get_trade_history(market='USDC_GRIN', two_h_delay=False):
         gc.collect()
         return None, None
 
+    # not sure why this is here...
     full_df = clean_df(full_df)
 
     # very_earliest keeps track of the last date in the saved df on disk
@@ -571,6 +572,7 @@ def get_trade_history(market='USDC_GRIN', two_h_delay=False):
 
     if len(dfs) > 0: #full_df.shape[0] > 0:
         full_df = pd.concat(dfs)
+        full_df = clean_df(full_df)
         # find where we should cutoff new data
         full_df.sort_values(by='globaltradeid', inplace=True)
         full_df.reset_index(inplace=True, drop=True)
