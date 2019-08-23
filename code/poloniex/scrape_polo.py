@@ -3,11 +3,13 @@ import os
 import gc
 import sys
 import time
+import csv
+
 from datetime import datetime, timedelta
 from threading import Thread
 import traceback
-import csv
 from io import StringIO
+from poloniex import PoloniexError
 
 # installed
 # if running from the code/ folder, this will try to import
@@ -84,7 +86,7 @@ def get_all_orderbooks():
         try:
             orderbooks = polo.returnOrderBook(currencyPair='all', depth=1000000)
             break
-        except polo.PoloniexError:
+        except PoloniexError:
             tries += 1
             time.sleep(1)
 
@@ -261,7 +263,7 @@ def get_tickers():
             ticks = polo.returnTicker()
             return ticks
             break
-        except polo.PoloniexError:
+        except PoloniexError:
             tries += 1
             time.sleep(1)
 
@@ -316,7 +318,7 @@ def get_polo_hist(market, start, end):
             h = polo.marketTradeHist(currencyPair=market, start=start, end=end)
             return h
             break
-        except polo.PoloniexError:
+        except PoloniexError:
             tries += 1
             time.sleep(1)
 
