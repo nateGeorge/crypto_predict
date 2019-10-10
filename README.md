@@ -1,5 +1,5 @@
 # crytpo_predict
-Predicts price trends for cryptocurrencies.
+Predicts price trends for cryptocurrencies.  This repo is pretty messy.  It also scrapes bittrex and poloniex data.
 
 # get started
 Install requirements:
